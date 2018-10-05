@@ -4,6 +4,7 @@
 #define NOP 0x90
 #define JMP_REL_SHORT 0xeb
 #define JMP_REL_NEAR 0xe9
+#define JCC_REL_NEAR 0x0f
 
 #define RELOC_INVALID 0
 #define RELOC_OFF 1
@@ -30,11 +31,12 @@ typedef struct mv_code_t{
 } mv_code_t;
 
 void gen_insn(mv_code_t *code, size_t chunk_size, cs_insn *insn);
+void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
 
 uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size,
-    uint64_t address, uint8_t chunk_size){
+    uint64_t address, uint64_t new_address, size_t *new_size, uint8_t chunk_size){
   csh handle;
   cs_insn *insn;
   uint8_t result;
@@ -87,6 +89,8 @@ uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size,
   }
 
   free(code.mapping);
+  free(code.relocs);
+  *new_size = code.code_size;
   return code.code;
 }
 
@@ -116,12 +120,66 @@ void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
     /* TODO: handle realloc failure, which will clobber code pointer */
     code->code = realloc(code->code, code->code_size);
   }
+  /* Rewrite instruction, using the instruction id to determine what kind
+     of instruction it is */
+  switch( insn->id ){
+    case X86_INS_CALL:
+    case X86_INS_JMP:
+      /* generate unconditional control flow */
+      gen_uncond(code, insn);
+      break;   
+    case X86_INS_JAE:
+    case X86_INS_JA:
+    case X86_INS_JBE:
+    case X86_INS_JB:
+    case X86_INS_JCXZ:
+    case X86_INS_JECXZ:
+    case X86_INS_JE:
+    case X86_INS_JGE:
+    case X86_INS_JG:
+    case X86_INS_JLE:
+    case X86_INS_JL:
+    case X86_INS_JNE:
+    case X86_INS_JNO:
+    case X86_INS_JNP:
+    case X86_INS_JNS:
+    case X86_INS_JO:
+    case X86_INS_JP:
+    case X86_INS_JRCXZ:
+    case X86_INS_JS:
+      /* generate conditional control flow */
+      gen_cond(code, insn);
+      break;
+    // If there is no match, just pass instruction through unmodified
+    default:
+      memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
+      code->offset += insn->size; // Since instruction is not modified, increment by instruction size
+  }
   if( insn->id == X86_INS_CALL || insn->id == X86_INS_JMP ){
-    /* generate unconditional control flow */
-    gen_uncond(code, insn);
   }else{
-    memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to generated code 
-    code->offset += insn->size; // Since instruction is not modified, increment by instruction size
+  }
+}
+
+void inline gen_cond(mv_code_t *code, cs_insn *insn){
+  int32_t disp;
+  memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes into generated code 
+  
+  /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
+  if( *(insn->bytes) == JCC_REL_NEAR  ){
+    /* JCC with 4-byte offset (6-byte instruction) */
+    disp = *(int32_t*)(insn->bytes+2);
+    gen_reloc(code, RELOC_OFF, code->offset+2, insn->address+6+disp);
+    code->offset += 6;
+  }else{
+    /* JCC with 1-byte offset (2-byte instruction) */
+    disp = *(int8_t*)(insn->bytes+1);
+    /* Rewrite instruction to use long form.  TODO: This does NOT WORK for JCXZ/JECXZ/JRCXZ */
+    /* The second byte of the long-form instructions is the same as the first byte of the
+       short instructions, except the first half-byte is incremented by 1. */
+    *(code->code+code->offset+1) = *(code->code+code->offset) + 0x10;
+    *(code->code+code->offset) = JCC_REL_NEAR;
+    gen_reloc(code, RELOC_OFF, code->offset+2, insn->address+2+disp);
+    code->offset += 6; // Size of new, larger instruction
   }
 }
 
@@ -129,6 +187,7 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
   int32_t disp;
   memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes into generated code 
   
+  /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
   switch( *(insn->bytes) ){
     /* Jump with 4-byte offset (5-byte instruction) */
     case JMP_REL_NEAR:
