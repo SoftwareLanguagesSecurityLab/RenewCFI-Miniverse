@@ -14,7 +14,7 @@
 */
 typedef struct mv_reloc_t{
   uint8_t type;
-  uint64_t offset;
+  uint32_t offset;
   uint64_t target;
 } mv_reloc_t;
 
@@ -26,12 +26,12 @@ typedef struct mv_code_t{
   size_t reloc_size;
   uint64_t base;
   size_t code_size;
-  uint64_t offset;
+  uint32_t offset;
 } mv_code_t;
 
 void gen_insn(mv_code_t *code, size_t chunk_size, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
-void gen_reloc(mv_code_t *code, uint8_t type, uint64_t offset, uint64_t target);
+void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
 
 uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size,
     uint64_t address, uint8_t chunk_size){
@@ -41,11 +41,13 @@ uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size,
   mv_code_t code;
   mv_reloc_t rel;
   size_t r;
+  size_t orig_bytes_size; //Capstone decrements the original size variable, so we must save it
   code.offset = 0;
   code.base = address;
   code.mapping = malloc( sizeof(uint32_t) * bytes_size );
   code.code = malloc( bytes_size ); // Will re-alloc to accommodate increased size
   code.code_size = bytes_size;
+  orig_bytes_size = bytes_size;
   code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size/2 ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
   code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
@@ -54,24 +56,34 @@ uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size,
   insn = cs_malloc(handle);
 
   while( result = ss_disasm_iter(handle, &bytes, &bytes_size, &address, insn) ){
-    printf("0x%llx: %s\t%s\n", insn->address, insn->mnemonic, insn->op_str);
     if( result == SS_SUCCESS ){
+      printf("0x%llx: %s\t%s\t (%x)\n", insn->address, insn->mnemonic, insn->op_str, code.offset);
       code.mapping[insn->address-code.base] = code.offset; // Set offset of instruction in mapping
       gen_insn(&code, chunk_size, insn);
     }else if( insn->id == X86_INS_JMP ){ // Special jmp instruction
       /* TODO: Patch special instruction */ 
+      printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
       gen_insn(&code, chunk_size, insn);
     }else{ // Instruction is X86_INS_HLT; special hlt instruction
       /* TODO: Roll back to last unconditional control flow instruction */
+      printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
       gen_insn(&code, chunk_size, insn);
     }
   }
  
-  printf("Type\tOffset\t\tTarget\n");
+  printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
   // Loop through relocations and patch target destinations
   for( r = 0; r < code.reloc_count; r++ ){
     rel = *(code.relocs+r);
-    printf("%u\t0x%llx (%llu)\t0x%llx\n", rel.type, rel.offset, rel.offset, rel.target);
+    /* If target is in mapping, update entry.  Otherwise, we probably want to somehow check
+       if this target is a valid target in a separate module.
+       TODO: Handle targets outside mapping! */
+    if( rel.target - code.base >= 0 && rel.target - code.base < orig_bytes_size ){
+      printf("%u\t0x%x (%u)\t0x%llx\t0x%x\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
+      *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
+    }else{
+      printf("%u\t0x%x (%u)\t0x%llx\tN/A\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+    }
   }
 
   free(code.mapping);
@@ -127,7 +139,9 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       disp = *(int32_t*)(insn->bytes+1);
       //disp = code->mapping[insn->address+disp-code->base] - code->offset;
       //memcpy(code->code+code->offset+1, disp, 4);
-      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+disp);
+      printf("Gen: %s\t%s\t(%llx + 5 + %x)\n", insn->mnemonic, insn->op_str, insn->address, disp);
+      /* Relocation target is instruction address + instruction length + displacement */
+      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
       code->offset += 5;
       break;
     /* Jump with 1-byte offset (2-byte instruction) */
@@ -136,14 +150,15 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       disp = *(int8_t*)(insn->bytes+1);
       /* Patch initial byte of instruction from short jmp to near jmp */
       *(code->code+code->offset) = JMP_REL_NEAR;
-      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+disp);
+      /* Relocation target is instruction address + instruction length + displacement */
+      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+2+disp);
       /* TODO: special case where we must extend the instruction to its longer form */
       code->offset += 5; // Size of new, larger instruction
       break;
   }
 }
 
-void gen_reloc(mv_code_t *code, uint8_t type, uint64_t offset, uint64_t target){
+void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target){
   // TODO: re-allocate when running out of space for relocations
   mv_reloc_t *reloc = (code->relocs + code->reloc_count);
   reloc->type = type;
