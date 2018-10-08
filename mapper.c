@@ -35,8 +35,8 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
 
-uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size,
-    uint64_t address, uint64_t new_address, size_t *new_size, uint8_t chunk_size){
+uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size, uint64_t address, uint64_t new_address,
+    size_t *new_size, uint8_t chunk_size, bool (*is_target)(uint64_t address, uint8_t *bytes)){
   csh handle;
   cs_insn *insn;
   uint8_t result;

@@ -2,6 +2,10 @@
 #include <sys/mman.h>
 #include <string.h>
 
+bool is_target(uint64_t address, uint8_t *bytes){
+  return false;
+}
+
 int main(int argc, char** argv){
 	csh handle;
 
@@ -11,7 +15,8 @@ int main(int argc, char** argv){
 	uint32_t new_address = 0x9000000;	// address of start of generated code
 	size_t new_size = 0;
 
-	uint8_t *new_code = gen_code(orig_code, code_size, address, (uint64_t)new_address, &new_size, 16);
+	uint8_t *new_code = gen_code(orig_code, code_size, address,
+		(uint64_t)new_address, &new_size, 16, &is_target);
 
         size_t pages = (new_size/4096)+1;
 	mmap((void*)new_address, 4096*pages, PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); 
