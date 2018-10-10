@@ -9,7 +9,7 @@ install: all
 	cp libminiverse.a /usr/local/lib/libminiverse.a
 
 %.o: %.c
-	$(CC) -m32 -c $< -o $@
+	$(CC) -m32 -g -c $< -o $@
 
 clean:
 	rm -f driver *.gch *.a *.o

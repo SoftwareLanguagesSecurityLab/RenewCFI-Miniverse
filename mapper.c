@@ -1,5 +1,6 @@
 #include "miniverse.h"
 #include <string.h>
+#include <sys/mman.h>
 
 #define NOP 0x90
 #define JMP_REL_SHORT 0xeb
@@ -25,7 +26,7 @@ typedef struct mv_code_t{
   mv_reloc_t *relocs;
   size_t reloc_count;
   size_t reloc_size;
-  uint64_t base;
+  uintptr_t base;
   size_t code_size;
   uint32_t offset;
 } mv_code_t;
@@ -35,20 +36,22 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
 
-uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size, uint64_t address, uint64_t new_address,
-    size_t *new_size, uint8_t chunk_size, bool (*is_target)(uint64_t address, uint8_t *bytes)){
+uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, uintptr_t new_address,
+    size_t *new_size, uint8_t chunk_size, bool (*is_target)(uintptr_t address, uint8_t *bytes)){
   csh handle;
   cs_insn *insn;
   uint8_t result;
   mv_code_t code;
   mv_reloc_t rel;
+  uint64_t cs_addr = (uintptr_t)address; // Capstone wants 64-bit address regardless of arch
   size_t r;
   size_t orig_bytes_size; //Capstone decrements the original size variable, so we must save it
   code.offset = 0;
   code.base = address;
   code.mapping = malloc( sizeof(uint32_t) * bytes_size );
-  code.code = malloc( bytes_size ); // Will re-alloc to accommodate increased size
-  code.code_size = bytes_size;
+  code.code = (uint8_t*) new_address;//malloc( bytes_size ); // Will re-alloc to accommodate increased size
+printf("New address: %x\n", (uintptr_t)code.code);
+  code.code_size = 4096;//((bytes_size/4096)+1)*4096;
   orig_bytes_size = bytes_size;
   code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size/2 ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
@@ -57,7 +60,7 @@ uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size, uint64_t address, uin
   ss_open(CS_ARCH_X86, CS_MODE_32, &handle);
   insn = cs_malloc(handle);
 
-  while( result = ss_disasm_iter(handle, &bytes, &bytes_size, &address, insn) ){
+  while( result = ss_disasm_iter(handle, &bytes, &bytes_size, &cs_addr, insn) ){
     if( result == SS_SUCCESS ){
       printf("0x%llx: %s\t%s\t (%x)\n", insn->address, insn->mnemonic, insn->op_str, code.offset);
       code.mapping[insn->address-code.base] = code.offset; // Set offset of instruction in mapping
@@ -96,11 +99,19 @@ uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size, uint64_t address, uin
 
 /* Generate a translated version of an instruction to place into generated code buffer. */
 void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
+  /* Expand allocated memory for code to fit additional instructions */
+  if( code->offset + (3*chunk_size) >= code->code_size ){
+    /* Allocate one new page and increase code size to reflect the new size */
+    printf("Mapping another page because %d >= %d\n", code->offset + (3*chunk_size), code->code_size);
+    mmap((void*)code->code+code->code_size, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0); 
+    code->code_size += 4096;
+  }
   /* If we have selected a chunk size that is not zero, pad to chunk size
      whenever we encounter an instruction that does not evenly fit within a
      chunk.  Fill the padded area with NOP instructions.
   */
   if( chunk_size != 0 && (chunk_size - (code->offset % chunk_size) < insn->size) ){
+    printf("Need to add nops: @%x, %d bytes\n", (uintptr_t)(code->code+code->offset), chunk_size - (code->offset % chunk_size) );
     memset(code->code+code->offset, NOP, chunk_size - (code->offset % chunk_size));
     code->offset += chunk_size - (code->offset % chunk_size);
   }
@@ -108,18 +119,20 @@ void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
      instructions are padded to right before the end of a chunk.
      TODO: Cover all variations of call instructions
   */
-  if( chunk_size != 0 && (insn->id == X86_INS_CALL) && (code->offset % chunk_size < insn->size) ){
-    memset(code->code+code->offset, NOP, (code->offset % chunk_size) - insn->size);
-    code->offset += (code->offset % chunk_size) - insn->size;
+  if( chunk_size != 0 && (insn->id == X86_INS_CALL) &&
+      ( (code->offset + insn->size) % chunk_size != 0) ){
+    printf("Need to add nops(2): @%x, %d bytes\n", (uintptr_t)(code->code+code->offset), (code->offset + insn->size) % chunk_size );
+    memset(code->code+code->offset, NOP, (code->offset + insn->size) % chunk_size);
+    code->offset += (code->offset + insn->size) % chunk_size;
   }
   /* Expand allocated memory for code to fit additional instructions */
   /* TODO: place this in a location that accounts for different code size
      for generated instructions */
-  if( code->offset+insn->size+chunk_size >= code->code_size ){
+  /*if( code->offset+insn->size+chunk_size >= code->code_size ){
     code->code_size *= 2;
-    /* TODO: handle realloc failure, which will clobber code pointer */
+     TODO: handle realloc failure, which will clobber code pointer
     code->code = realloc(code->code, code->code_size);
-  }
+  }*/
   /* Rewrite instruction, using the instruction id to determine what kind
      of instruction it is */
   switch( insn->id ){
