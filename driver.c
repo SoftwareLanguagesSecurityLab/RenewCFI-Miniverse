@@ -32,7 +32,7 @@ int main(int argc, char** argv){
 	uint32_t *mapping = gen_code(orig_code, code_size, address,
 		new_address, &new_size, 16, &is_target);
 
-	uint32_t entry = 0x120;// Offset of function we want to execute
+	uint32_t entry = 0x150;// Offset of function we want to execute
 	entry = mapping[entry];// Look up new entry point
 	free(mapping);
 

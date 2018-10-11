@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 
 #define NOP 0x90
+#define RET_NEAR 0xc3
 #define CALL_REL_NEAR 0xe8
 #define JMP_REL_SHORT 0xeb
 #define JMP_REL_NEAR 0xe9
@@ -30,9 +31,11 @@ typedef struct mv_code_t{
   uintptr_t base;
   size_t code_size;
   uint32_t offset;
+  uintptr_t mask;
 } mv_code_t;
 
 void gen_insn(mv_code_t *code, size_t chunk_size, cs_insn *insn);
+void inline gen_ret(mv_code_t *code, cs_insn *insn);
 void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
@@ -48,6 +51,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   size_t r;
   size_t orig_bytes_size; //Capstone decrements the original size variable, so we must save it
   code.offset = 0;
+  code.mask = -1 ^ (chunk_size-1); // TODO: Mask off top bits in future
   code.base = address;
   code.mapping = malloc( sizeof(uint32_t) * bytes_size );
   code.code = (uint8_t*) new_address;//malloc( bytes_size ); // Will re-alloc to accommodate increased size
@@ -138,6 +142,9 @@ void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
   /* Rewrite instruction, using the instruction id to determine what kind
      of instruction it is */
   switch( insn->id ){
+    case X86_INS_RET:
+      gen_ret(code, insn);
+      break;
     case X86_INS_CALL:
     case X86_INS_JMP:
       /* generate unconditional control flow */
@@ -172,6 +179,20 @@ void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
   }
   if( insn->id == X86_INS_CALL || insn->id == X86_INS_JMP ){
   }else{
+  }
+}
+
+void inline gen_ret(mv_code_t *code, cs_insn *insn){
+  /* TODO: Handle far returns */
+  /* TODO: Handle returns that pop extra bytes from stack */
+  if( *(insn->bytes) == RET_NEAR ){
+     /* Mask value at esp (the return address) to ensure return can only go to aligned chunk */
+     *(code->code+code->offset) = 0x81;// AND r/m32, imm 32
+     *(code->code+code->offset+1) = 0x24;// r/m byte
+     *(code->code+code->offset+2) = 0x24;// sib byte
+     *(uintptr_t*)(code->code+code->offset+3) = code->mask;// immediate value holds mask
+     *(code->code+code->offset+7) = RET_NEAR;// place ret instruction after masking
+     code->offset += 8; // Size of and+ret instruction pair  
   }
 }
 
