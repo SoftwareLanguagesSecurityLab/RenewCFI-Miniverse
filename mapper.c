@@ -54,9 +54,8 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   code.mask = -1 ^ (chunk_size-1); // TODO: Mask off top bits in future
   code.base = address;
   code.mapping = malloc( sizeof(uint32_t) * bytes_size );
-  code.code = (uint8_t*) new_address;//malloc( bytes_size ); // Will re-alloc to accommodate increased size
-printf("New address: %x\n", (uintptr_t)code.code);
-  code.code_size = 4096;//((bytes_size/4096)+1)*4096;
+  code.code = (uint8_t*) new_address;// Will allocate more pages if needed
+  code.code_size = 4096;// Assume we start with only one page allocated
   orig_bytes_size = bytes_size;
   code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size/2 ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
@@ -89,10 +88,10 @@ printf("New address: %x\n", (uintptr_t)code.code);
        if this target is a valid target in a separate module.
        TODO: Handle targets outside mapping! */
     if( rel.target - code.base >= 0 && rel.target - code.base < orig_bytes_size ){
-      printf("%u\t0x%x (%u)\t0x%llx\t0x%x\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
+      printf("%u\t0x%x (%u)\t0x%llx\t0x%x\t\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
       *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
     }else{
-      printf("%u\t0x%x (%u)\t0x%llx\tN/A\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+      printf("%u\t0x%x (%u)\t0x%llx\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
       *(uint32_t*)(code.code + rel.offset) = rel.target - ((uintptr_t)code.code + rel.offset + 4);
     }
   }
@@ -131,14 +130,6 @@ void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
     memset(code->code+code->offset, NOP, 16 - ((code->offset + insn->size) % chunk_size));
     code->offset += 16 - ((code->offset + insn->size) % chunk_size);
   }
-  /* Expand allocated memory for code to fit additional instructions */
-  /* TODO: place this in a location that accounts for different code size
-     for generated instructions */
-  /*if( code->offset+insn->size+chunk_size >= code->code_size ){
-    code->code_size *= 2;
-     TODO: handle realloc failure, which will clobber code pointer
-    code->code = realloc(code->code, code->code_size);
-  }*/
   /* Rewrite instruction, using the instruction id to determine what kind
      of instruction it is */
   switch( insn->id ){
@@ -176,9 +167,6 @@ void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
     default:
       memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
       code->offset += insn->size; // Since instruction is not modified, increment by instruction size
-  }
-  if( insn->id == X86_INS_CALL || insn->id == X86_INS_JMP ){
-  }else{
   }
 }
 
