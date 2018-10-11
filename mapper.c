@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 
 #define NOP 0x90
+#define CALL_REL_NEAR 0xe8
 #define JMP_REL_SHORT 0xeb
 #define JMP_REL_NEAR 0xe9
 #define JCC_REL_NEAR 0x0f
@@ -36,7 +37,7 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
 
-uint8_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, uintptr_t new_address,
+uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, uintptr_t new_address,
     size_t *new_size, uint8_t chunk_size, bool (*is_target)(uintptr_t address, uint8_t *bytes)){
   csh handle;
   cs_insn *insn;
@@ -88,13 +89,14 @@ printf("New address: %x\n", (uintptr_t)code.code);
       *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
     }else{
       printf("%u\t0x%x (%u)\t0x%llx\tN/A\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+      *(uint32_t*)(code.code + rel.offset) = rel.target - ((uintptr_t)code.code + rel.offset + 4);
     }
   }
 
-  free(code.mapping);
+  //free(code.mapping);
   free(code.relocs);
   *new_size = code.code_size;
-  return code.code;
+  return code.mapping;
 }
 
 /* Generate a translated version of an instruction to place into generated code buffer. */
@@ -121,9 +123,9 @@ void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
   */
   if( chunk_size != 0 && (insn->id == X86_INS_CALL) &&
       ( (code->offset + insn->size) % chunk_size != 0) ){
-    printf("Need to add nops(2): @%x, %d bytes\n", (uintptr_t)(code->code+code->offset), (code->offset + insn->size) % chunk_size );
-    memset(code->code+code->offset, NOP, (code->offset + insn->size) % chunk_size);
-    code->offset += (code->offset + insn->size) % chunk_size;
+    printf("Need to add nops(2): @%x, %d bytes\n", (uintptr_t)(code->code+code->offset), 16 - (code->offset + insn->size) % chunk_size );
+    memset(code->code+code->offset, NOP, 16 - ((code->offset + insn->size) % chunk_size));
+    code->offset += 16 - ((code->offset + insn->size) % chunk_size);
   }
   /* Expand allocated memory for code to fit additional instructions */
   /* TODO: place this in a location that accounts for different code size
@@ -202,6 +204,8 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
   switch( *(insn->bytes) ){
+    /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
+    case CALL_REL_NEAR:
     /* Jump with 4-byte offset (5-byte instruction) */
     case JMP_REL_NEAR:
       /* Retrieve jmp target offset, look up rewritten destination in mapping, and patch address */
