@@ -30,14 +30,16 @@ typedef struct mv_code_t{
   size_t reloc_size;
   uintptr_t base;
   size_t code_size;
+  uint8_t chunk_size;
   uint32_t offset;
   uintptr_t mask;
 } mv_code_t;
 
-void gen_insn(mv_code_t *code, size_t chunk_size, cs_insn *insn);
+void gen_insn(mv_code_t *code, cs_insn *insn);
 void inline gen_ret(mv_code_t *code, cs_insn *insn);
 void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
+void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
 
 uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, uintptr_t new_address,
@@ -56,6 +58,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   code.mapping = malloc( sizeof(uint32_t) * bytes_size );
   code.code = (uint8_t*) new_address;// Will allocate more pages if needed
   code.code_size = 4096;// Assume we start with only one page allocated
+  code.chunk_size = chunk_size;
   orig_bytes_size = bytes_size;
   code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size/2 ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
@@ -68,15 +71,15 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
     if( result == SS_SUCCESS ){
       printf("0x%llx: %s\t%s\t (%x)\n", insn->address, insn->mnemonic, insn->op_str, code.offset);
       code.mapping[insn->address-code.base] = code.offset; // Set offset of instruction in mapping
-      gen_insn(&code, chunk_size, insn);
+      gen_insn(&code, insn);
     }else if( insn->id == X86_INS_JMP ){ // Special jmp instruction
       /* TODO: Patch special instruction */ 
       printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
-      gen_insn(&code, chunk_size, insn);
+      gen_insn(&code, insn);
     }else{ // Instruction is X86_INS_HLT; special hlt instruction
       /* TODO: Roll back to last unconditional control flow instruction */
       printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
-      gen_insn(&code, chunk_size, insn);
+      gen_insn(&code, insn);
     }
   }
  
@@ -103,32 +106,14 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
 }
 
 /* Generate a translated version of an instruction to place into generated code buffer. */
-void gen_insn(mv_code_t* code, size_t chunk_size, cs_insn *insn){
-  /* Expand allocated memory for code to fit additional instructions */
-  if( code->offset + (3*chunk_size) >= code->code_size ){
+void gen_insn(mv_code_t* code, cs_insn *insn){
+  /* Expand allocated memory for code to fit additional instructions and padding */
+  if( code->offset + (3*code->chunk_size) >= code->code_size ){
     /* Allocate one new page and increase code size to reflect the new size */
-    printf("Mapping another page because %d >= %d\n", code->offset + (3*chunk_size), code->code_size);
-    mmap((void*)code->code+code->code_size, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0); 
+    printf("Mapping another page: %d >= %d\n", code->offset + (3*code->chunk_size), code->code_size);
+    mmap((void*)code->code+code->code_size,
+      4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0); 
     code->code_size += 4096;
-  }
-  /* If we have selected a chunk size that is not zero, pad to chunk size
-     whenever we encounter an instruction that does not evenly fit within a
-     chunk.  Fill the padded area with NOP instructions.
-  */
-  if( chunk_size != 0 && (chunk_size - (code->offset % chunk_size) < insn->size) ){
-    printf("Need to add nops: @%x, %d bytes\n", (uintptr_t)(code->code+code->offset), chunk_size - (code->offset % chunk_size) );
-    memset(code->code+code->offset, NOP, chunk_size - (code->offset % chunk_size));
-    code->offset += chunk_size - (code->offset % chunk_size);
-  }
-  /* If we have a nonzero chunk size, then we need to ensure all call
-     instructions are padded to right before the end of a chunk.
-     TODO: Cover all variations of call instructions
-  */
-  if( chunk_size != 0 && (insn->id == X86_INS_CALL) &&
-      ( (code->offset + insn->size) % chunk_size != 0) ){
-    printf("Need to add nops(2): @%x, %d bytes\n", (uintptr_t)(code->code+code->offset), 16 - (code->offset + insn->size) % chunk_size );
-    memset(code->code+code->offset, NOP, 16 - ((code->offset + insn->size) % chunk_size));
-    code->offset += 16 - ((code->offset + insn->size) % chunk_size);
   }
   /* Rewrite instruction, using the instruction id to determine what kind
      of instruction it is */
@@ -175,6 +160,7 @@ void inline gen_ret(mv_code_t *code, cs_insn *insn){
   /* TODO: Handle returns that pop extra bytes from stack */
   if( *(insn->bytes) == RET_NEAR ){
      /* Mask value at esp (the return address) to ensure return can only go to aligned chunk */
+     gen_padding(code, insn, 8); 
      *(code->code+code->offset) = 0x81;// AND r/m32, imm 32
      *(code->code+code->offset+1) = 0x24;// r/m byte
      *(code->code+code->offset+2) = 0x24;// sib byte
@@ -186,22 +172,28 @@ void inline gen_ret(mv_code_t *code, cs_insn *insn){
 
 void inline gen_cond(mv_code_t *code, cs_insn *insn){
   int32_t disp;
-  memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes into generated code 
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
   if( *(insn->bytes) == JCC_REL_NEAR  ){
     /* JCC with 4-byte offset (6-byte instruction) */
+    gen_padding(code, insn, 6); 
+    /* Write instruction opcode in manually instead of using memcpy call */
+    *(code->code+code->offset) = JCC_REL_NEAR;
+    *(code->code+code->offset+1) = *(insn->bytes+1);
     disp = *(int32_t*)(insn->bytes+2);
     gen_reloc(code, RELOC_OFF, code->offset+2, insn->address+6+disp);
     code->offset += 6;
   }else{
     /* JCC with 1-byte offset (2-byte instruction) */
+    gen_padding(code, insn, 6); 
+    /* Do not need to copy instruction bytes here because we will be writing the opcode manually.
+       The bytes past the opcode will be patched in the relocation entry pass. */
     disp = *(int8_t*)(insn->bytes+1);
     /* Rewrite instruction to use long form.  TODO: This does NOT WORK for JCXZ/JECXZ/JRCXZ */
     /* The second byte of the long-form instructions is the same as the first byte of the
        short instructions, except the first half-byte is incremented by 1. */
-    *(code->code+code->offset+1) = *(code->code+code->offset) + 0x10;
     *(code->code+code->offset) = JCC_REL_NEAR;
+    *(code->code+code->offset+1) = *(insn->bytes) + 0x10;
     gen_reloc(code, RELOC_OFF, code->offset+2, insn->address+2+disp);
     code->offset += 6; // Size of new, larger instruction
   }
@@ -209,7 +201,6 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn){
 
 void inline gen_uncond(mv_code_t *code, cs_insn *insn){
   int32_t disp;
-  memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes into generated code 
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
   switch( *(insn->bytes) ){
@@ -217,10 +208,9 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
     case CALL_REL_NEAR:
     /* Jump with 4-byte offset (5-byte instruction) */
     case JMP_REL_NEAR:
-      /* Retrieve jmp target offset, look up rewritten destination in mapping, and patch address */
-      /* TODO: This approach will actually not work, because the mapping may not yet have an entry
-         for code that must be jumped *forward* to, so this code will need to be moved to a second
-         pass in which all statically identifiable targets are patched. */
+      gen_padding(code, insn, 5); 
+      *(code->code+code->offset) = *(insn->bytes);
+      /* Retrieve jmp target offset and add to relocation table */
       disp = *(int32_t*)(insn->bytes+1);
       //disp = code->mapping[insn->address+disp-code->base] - code->offset;
       //memcpy(code->code+code->offset+1, disp, 4);
@@ -231,6 +221,7 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       break;
     /* Jump with 1-byte offset (2-byte instruction) */
     case JMP_REL_SHORT:
+      gen_padding(code, insn, 5); 
       /* Special case where we must extend the instruction to its longer form */
       disp = *(int8_t*)(insn->bytes+1);
       /* Patch initial byte of instruction from short jmp to near jmp */
@@ -240,6 +231,27 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       /* TODO: special case where we must extend the instruction to its longer form */
       code->offset += 5; // Size of new, larger instruction
       break;
+  }
+}
+
+void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
+  /* If we have selected a chunk size that is not zero, pad to chunk size
+     whenever we encounter an instruction that does not evenly fit within a
+     chunk.  Fill the padded area with NOP instructions.
+  */
+  if( code->chunk_size != 0 && (code->chunk_size - (code->offset % code->chunk_size) < new_size) ){
+    memset(code->code+code->offset, NOP, code->chunk_size - (code->offset % code->chunk_size));
+    code->offset += code->chunk_size - (code->offset % code->chunk_size);
+  }
+  /* If we have a nonzero chunk size, then we need to ensure all call
+     instructions are padded to right before the end of a chunk.
+     TODO: Cover all variations of call instructions
+  */
+  if( code->chunk_size != 0 && (insn->id == X86_INS_CALL) &&
+      ( (code->offset + new_size) % code->chunk_size != 0) ){
+    memset(code->code+code->offset, NOP,
+      code->chunk_size - ((code->offset + new_size) % code->chunk_size));
+    code->offset += code->chunk_size - ((code->offset + new_size) % code->chunk_size);
   }
 }
 
