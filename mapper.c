@@ -33,6 +33,7 @@ typedef struct mv_code_t{
   uint8_t chunk_size;
   uint32_t offset;
   uintptr_t mask;
+  bool (*is_target)(uintptr_t address, uint8_t *bytes);
 } mv_code_t;
 
 void gen_insn(mv_code_t *code, cs_insn *insn);
@@ -63,6 +64,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size/2 ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
   code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
+  code.is_target = is_target;
   
   ss_open(CS_ARCH_X86, CS_MODE_32, &handle);
   insn = cs_malloc(handle);
@@ -150,6 +152,7 @@ void gen_insn(mv_code_t* code, cs_insn *insn){
       break;
     // If there is no match, just pass instruction through unmodified
     default:
+      gen_padding(code, insn, insn->size); 
       memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
       code->offset += insn->size; // Since instruction is not modified, increment by instruction size
   }
@@ -235,11 +238,15 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
 }
 
 void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
-  /* If we have selected a chunk size that is not zero, pad to chunk size
-     whenever we encounter an instruction that does not evenly fit within a
-     chunk.  Fill the padded area with NOP instructions.
+  /* If we have selected a chunk size that is not zero AND the instruction is not already aligned,
+     pad to chunk size whenever we encounter either:
+       -An instruction that does not evenly fit within a chunk.
+       -An instruction determined to be an indirect jump target by the is_target callback
+    Fill the padded area with NOP instructions.
   */
-  if( code->chunk_size != 0 && (code->chunk_size - (code->offset % code->chunk_size) < new_size) ){
+  if( code->chunk_size != 0 && code->offset % code->chunk_size != 0 &&
+      ( (code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address)) ||
+      (code->chunk_size - (code->offset % code->chunk_size) < new_size) ) ){
     memset(code->code+code->offset, NOP, code->chunk_size - (code->offset % code->chunk_size));
     code->offset += code->chunk_size - (code->offset % code->chunk_size);
   }
