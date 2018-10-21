@@ -28,10 +28,12 @@ typedef struct mv_code_t{
   mv_reloc_t *relocs;
   size_t reloc_count;
   size_t reloc_size;
+  size_t last_safe_reloc; // Last reloc before the most recent unconditional jump or ret
   uintptr_t base;
   size_t code_size;
   uint8_t chunk_size;
   uint32_t offset;
+  uint32_t last_safe_offset; // Last offset before the most recent unconditional jump or ret
   uintptr_t mask;
   bool (*is_target)(uintptr_t address, uint8_t *bytes);
 } mv_code_t;
@@ -53,7 +55,9 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   uint64_t cs_addr = (uintptr_t)address; // Capstone wants 64-bit address regardless of arch
   size_t r;
   size_t orig_bytes_size; //Capstone decrements the original size variable, so we must save it
+  size_t trimmed_bytes = 0; // This variable is optional, as it's just used to collect a metric.
   code.offset = 0;
+  code.last_safe_offset = 0;
   code.mask = -1 ^ (chunk_size-1); // TODO: Mask off top bits in future
   code.base = address;
   code.mapping = malloc( sizeof(uint32_t) * bytes_size );
@@ -63,6 +67,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   orig_bytes_size = bytes_size;
   code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size/2 ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
+  code.last_safe_reloc = 0;
   code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
   code.is_target = is_target;
   
@@ -79,9 +84,21 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
       printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
       gen_insn(&code, insn);
     }else{ // Instruction is X86_INS_HLT; special hlt instruction
-      /* TODO: Roll back to last unconditional control flow instruction */
+      /* Roll back to last unconditional control flow instruction, because all code following it
+         ends up potentially flowing into an invalid instruction */
+      /* Since we stop at unconditional jumps, and roll back to them whenever we encounter this
+         special hlt, we ensure that the end of the generated code (or any generated code that
+         leads up to the end of the original code bytes) ends at the last one of the unconditional
+         jumps found.  However,
+         TODO: We should not allow spare bytes to remain outside the safely generated code, so any
+         extra space still allocated that we are not using (such as the rest of a page) should be
+         filled with hlt instructions */
       printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
-      gen_insn(&code, insn);
+      printf("%u bytes trimmed\n", code.offset - code.last_safe_offset);
+      trimmed_bytes += (code.offset - code.last_safe_offset);
+      code.offset = code.last_safe_offset;
+      code.reloc_count = code.last_safe_reloc;
+      //gen_insn(&code, insn);
     }
   }
  
@@ -101,6 +118,9 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
     }
   }
 
+  printf("Original code size: %d\n", orig_bytes_size);
+  printf("Generated code size: %d\n", code.offset);
+  printf("Total bytes trimmed: %d\n", trimmed_bytes);
   //free(code.mapping);
   free(code.relocs);
   *new_size = code.code_size;
@@ -123,8 +143,8 @@ void gen_insn(mv_code_t* code, cs_insn *insn){
     case X86_INS_RET:
       gen_ret(code, insn);
       break;
-    case X86_INS_CALL:
     case X86_INS_JMP:
+    case X86_INS_CALL:
       /* generate unconditional control flow */
       gen_uncond(code, insn);
       break;   
@@ -170,6 +190,8 @@ void inline gen_ret(mv_code_t *code, cs_insn *insn){
      *(uintptr_t*)(code->code+code->offset+3) = code->mask;// immediate value holds mask
      *(code->code+code->offset+7) = RET_NEAR;// place ret instruction after masking
      code->offset += 8; // Size of and+ret instruction pair  
+     code->last_safe_offset = code->offset;
+     code->last_safe_reloc = code->reloc_count;
   }
 }
 
@@ -207,10 +229,13 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
   switch( *(insn->bytes) ){
-    /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
-    case CALL_REL_NEAR:
     /* Jump with 4-byte offset (5-byte instruction) */
     case JMP_REL_NEAR:
+      /* Save last safe data before the CALL_REL_NEAR case because code after a call is executed */
+      code->last_safe_offset = code->offset + 5;
+      code->last_safe_reloc = code->reloc_count + 1;
+    /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
+    case CALL_REL_NEAR:
       gen_padding(code, insn, 5); 
       *(code->code+code->offset) = *(insn->bytes);
       /* Retrieve jmp target offset and add to relocation table */
@@ -233,6 +258,8 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+2+disp);
       /* TODO: special case where we must extend the instruction to its longer form */
       code->offset += 5; // Size of new, larger instruction
+      code->last_safe_offset = code->offset;
+      code->last_safe_reloc = code->reloc_count;
       break;
   }
 }
