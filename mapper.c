@@ -7,11 +7,17 @@
 #define CALL_REL_NEAR 0xe8
 #define JMP_REL_SHORT 0xeb
 #define JMP_REL_NEAR 0xe9
+#define CALL_JMP_INDIRECT 0xff
 #define JCC_REL_NEAR 0x0f
 
 #define RELOC_INVALID 0
 #define RELOC_OFF 1
 #define RELOC_ABS 2
+
+/* TODO: Perhaps we should do two independent passes
+   without storing relocation data.  The more data stored
+   in data structures, the larger the potential attack surface.
+*/
 
 /*
   TODO: Specify 64- or 32-bit variables to depend on chosen architecture
@@ -38,10 +44,16 @@ typedef struct mv_code_t{
   bool (*is_target)(uintptr_t address, uint8_t *bytes);
 } mv_code_t;
 
+uint8_t indirect_template_before[] = "\x50\x8b";
+uint8_t indirect_template_after[] = "\xa8\x03\x0f\x45\x00";
+uint8_t indirect_template_mask_call[] = "\x25\xe0\xff\xff\x3f\x50\x58\x58\xff\x54\x24\xf8";
+uint8_t indirect_template_mask_jmp[] = "\x25\xe0\xff\xff\x3f\x50\x58\x58\xff\x64\x24\xf8";
+
 void gen_insn(mv_code_t *code, cs_insn *insn);
 void inline gen_ret(mv_code_t *code, cs_insn *insn);
 void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
+void gen_indirect(mv_code_t *code, cs_insn *insn);
 void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
 
@@ -261,7 +273,54 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       code->last_safe_offset = code->offset;
       code->last_safe_reloc = code->reloc_count;
       break;
+    case CALL_JMP_INDIRECT:
+      gen_indirect(code, insn);
+      break;
   }
+}
+
+void gen_indirect(mv_code_t *code, cs_insn *insn){
+  /* TODO: This does not handle
+       target in esp
+       overlapping pointers
+       optimizations for targets in registers
+  */
+  /*
+    push eax
+    mov eax, <MOD/RM>
+    ---
+    test byte ptr eax, 3
+      OR test al, 3 (keystone doesn't like the former)
+    cmovnz eax, [eax]
+    ---
+    and eax, 0x3FFFFFE0
+    mov [esp-4],eax
+      OR push eax, pop eax
+    pop eax
+    call/jmp [esp-8] 
+  */  
+  /* This code does not fit cleanly into a single chunk, 
+     so we need to split it into two pieces */
+  gen_padding(code, insn, 5);
+  *(code->code+code->offset++) = indirect_template_before[0];
+  *(code->code+code->offset++) = indirect_template_before[1];
+  
+  memcpy( code->code+code->offset, indirect_template_after, 5);
+  code->offset += 5;
+  gen_padding(code, insn, 12);
+  if( insn->id == X86_INS_CALL ){
+    memcpy( code->code+code->offset, indirect_template_mask_call, 12);
+  }else{
+    memcpy( code->code+code->offset, indirect_template_mask_jmp, 12);
+  }
+  code->offset += 12;
+  
+
+  if( insn->id == X86_INS_JMP ){
+    code->last_safe_offset = code->offset;
+    code->last_safe_reloc = code->reloc_count;
+  }
+  
 }
 
 void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){

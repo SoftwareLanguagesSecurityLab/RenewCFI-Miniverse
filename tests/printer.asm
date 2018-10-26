@@ -1,13 +1,14 @@
 ;nasm -f elf fstring.asm
 BITS 32
 EXTERN get_fstring
+EXTERN get_fstring_indirect
 EXTERN printf
 GLOBAL print_stuff
 GLOBAL print
 SECTION .text
 print_stuff:
 	push 0x0
-	call get_fstring
+	call get_fstring_indirect
 	;mov [esp], eax
 	;push 0x1
 	add esp,4
