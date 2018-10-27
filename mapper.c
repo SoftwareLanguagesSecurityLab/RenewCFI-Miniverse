@@ -12,7 +12,8 @@
 
 #define RELOC_INVALID 0
 #define RELOC_OFF 1
-#define RELOC_ABS 2
+#define RELOC_IND 2
+#define RELOC_ABS 3
 
 /* TODO: Perhaps we should do two independent passes
    without storing relocation data.  The more data stored
@@ -25,7 +26,7 @@
 typedef struct mv_reloc_t{
   uint8_t type;
   uint32_t offset;
-  uint64_t target;
+  uintptr_t target;
 } mv_reloc_t;
 
 typedef struct mv_code_t{
@@ -45,7 +46,7 @@ typedef struct mv_code_t{
 } mv_code_t;
 
 uint8_t indirect_template_before[] = "\x50\x8b";
-uint8_t indirect_template_after[] = "\xa8\x03\x0f\x45\x00";
+uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
 uint8_t indirect_template_mask_call[] = "\x25\xe0\xff\xff\x3f\x50\x58\x58\xff\x54\x24\xf8";
 uint8_t indirect_template_mask_jmp[] = "\x25\xe0\xff\xff\x3f\x50\x58\x58\xff\x64\x24\xf8";
 
@@ -55,7 +56,8 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn);
 void inline gen_uncond(mv_code_t *code, cs_insn *insn);
 void gen_indirect(mv_code_t *code, cs_insn *insn);
 void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size);
-void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target);
+void check_target(mv_code_t *code, cs_insn *insn);
+void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target);
 
 uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, uintptr_t new_address,
     size_t *new_size, uint8_t chunk_size, bool (*is_target)(uintptr_t address, uint8_t *bytes)){
@@ -77,7 +79,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   code.code_size = 4096;// Assume we start with only one page allocated
   code.chunk_size = chunk_size;
   orig_bytes_size = bytes_size;
-  code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size/2 ); //Will re-alloc if more relocs needed
+  code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
   code.last_safe_reloc = 0;
   code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
@@ -113,22 +115,35 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
       //gen_insn(&code, insn);
     }
   }
+
+  /* Make original text section writable before patching relocs, since we will need to modify it */
+  mprotect((void*)address, bytes_size, PROT_READ|PROT_WRITE);
  
   printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
   // Loop through relocations and patch target destinations
   for( r = 0; r < code.reloc_count; r++ ){
     rel = *(code.relocs+r);
-    /* If target is in mapping, update entry.  Otherwise, we probably want to somehow check
-       if this target is a valid target in a separate module.
-       TODO: Handle targets outside mapping! */
-    if( rel.target - code.base >= 0 && rel.target - code.base < orig_bytes_size ){
-      printf("%u\t0x%x (%u)\t0x%llx\t0x%x\t\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
-      *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
-    }else{
-      printf("%u\t0x%x (%u)\t0x%llx\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
-      *(uint32_t*)(code.code + rel.offset) = rel.target - ((uintptr_t)code.code + rel.offset + 4);
+    if( rel.type == RELOC_OFF ){
+      /* If target is in mapping, update entry.  Otherwise, we probably want to somehow check
+         if this target is a valid target in a separate module.
+         TODO: Handle targets outside mapping! */
+      if( rel.target - code.base >= 0 && rel.target - code.base < orig_bytes_size ){
+        printf("%u\t0x%x (%u)\t0x%x\t0x%x\t\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
+        *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
+      }else{
+        printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+        *(uint32_t*)(code.code + rel.offset) = rel.target - ((uintptr_t)code.code + rel.offset + 4);
+      }
+    }else if( rel.type == RELOC_IND ){
+      /* Unlike for RELOC_OFF type, we write directly to the target, placing the new base address
+         plus the offset directly at that address in the original text section */  
+      printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+      *(uint32_t*)(rel.target) = new_address + rel.offset;
     }
   }
+
+  /* Remove write permission from original text section after modifying it */
+  mprotect((void*)address, bytes_size, PROT_READ);
 
   printf("Original code size: %d\n", orig_bytes_size);
   printf("Generated code size: %d\n", code.offset);
@@ -185,6 +200,7 @@ void gen_insn(mv_code_t* code, cs_insn *insn){
     // If there is no match, just pass instruction through unmodified
     default:
       gen_padding(code, insn, insn->size); 
+      check_target(code, insn);
       memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
       code->offset += insn->size; // Since instruction is not modified, increment by instruction size
   }
@@ -196,6 +212,7 @@ void inline gen_ret(mv_code_t *code, cs_insn *insn){
   if( *(insn->bytes) == RET_NEAR ){
      /* Mask value at esp (the return address) to ensure return can only go to aligned chunk */
      gen_padding(code, insn, 8); 
+     check_target(code, insn);
      *(code->code+code->offset) = 0x81;// AND r/m32, imm 32
      *(code->code+code->offset+1) = 0x24;// r/m byte
      *(code->code+code->offset+2) = 0x24;// sib byte
@@ -214,6 +231,7 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn){
   if( *(insn->bytes) == JCC_REL_NEAR  ){
     /* JCC with 4-byte offset (6-byte instruction) */
     gen_padding(code, insn, 6); 
+    check_target(code, insn);
     /* Write instruction opcode in manually instead of using memcpy call */
     *(code->code+code->offset) = JCC_REL_NEAR;
     *(code->code+code->offset+1) = *(insn->bytes+1);
@@ -223,6 +241,7 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn){
   }else{
     /* JCC with 1-byte offset (2-byte instruction) */
     gen_padding(code, insn, 6); 
+    check_target(code, insn);
     /* Do not need to copy instruction bytes here because we will be writing the opcode manually.
        The bytes past the opcode will be patched in the relocation entry pass. */
     disp = *(int8_t*)(insn->bytes+1);
@@ -249,6 +268,7 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
     /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
     case CALL_REL_NEAR:
       gen_padding(code, insn, 5); 
+      check_target(code, insn);
       *(code->code+code->offset) = *(insn->bytes);
       /* Retrieve jmp target offset and add to relocation table */
       disp = *(int32_t*)(insn->bytes+1);
@@ -262,6 +282,7 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
     /* Jump with 1-byte offset (2-byte instruction) */
     case JMP_REL_SHORT:
       gen_padding(code, insn, 5); 
+      check_target(code, insn);
       /* Special case where we must extend the instruction to its longer form */
       disp = *(int8_t*)(insn->bytes+1);
       /* Patch initial byte of instruction from short jmp to near jmp */
@@ -280,6 +301,7 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
 }
 
 void gen_indirect(mv_code_t *code, cs_insn *insn){
+  uint32_t saved_off;
   /* TODO: This does not handle
        target in esp
        overlapping pointers
@@ -289,7 +311,7 @@ void gen_indirect(mv_code_t *code, cs_insn *insn){
     push eax
     mov eax, <MOD/RM>
     ---
-    test byte ptr eax, 3
+    test byte ptr [eax], 3
       OR test al, 3 (keystone doesn't like the former)
     cmovnz eax, [eax]
     ---
@@ -301,12 +323,26 @@ void gen_indirect(mv_code_t *code, cs_insn *insn){
   */  
   /* This code does not fit cleanly into a single chunk, 
      so we need to split it into two pieces */
-  gen_padding(code, insn, 5);
+  if( insn->size == 3 ){
+    gen_padding(code, insn, 10);
+  }else{
+    gen_padding(code, insn, 9);
+  }
+  check_target(code, insn);
   *(code->code+code->offset++) = indirect_template_before[0];
   *(code->code+code->offset++) = indirect_template_before[1];
+  /* Copy Mod/RM byte from original instruction, but mask off /digit or REG:
+     we can simply mask it off specifically because our target is eax,
+     which is equivalent to /0 */
+  *(code->code+code->offset++) = insn->bytes[1] & 0xC7;
+  /* If instruction has a SIB byte, copy it over as well. */
+  if( insn->size == 3 ){
+    *(code->code+code->offset++) = insn->bytes[2];
+  }
+  memcpy( code->code+code->offset, indirect_template_after, 6);
+  code->offset += 6;
   
-  memcpy( code->code+code->offset, indirect_template_after, 5);
-  code->offset += 5;
+  /* Second half */ 
   gen_padding(code, insn, 12);
   if( insn->id == X86_INS_CALL ){
     memcpy( code->code+code->offset, indirect_template_mask_call, 12);
@@ -314,8 +350,12 @@ void gen_indirect(mv_code_t *code, cs_insn *insn){
     memcpy( code->code+code->offset, indirect_template_mask_jmp, 12);
   }
   code->offset += 12;
-  
 
+  /* Generate a relocation entry to patch the ORIGINAL text section */
+  /*gen_reloc(code, RELOC_IND, saved_off, insn->address);*/
+  
+  /* For a jump, we know that code can't fall through, so this offset is safe,
+     i.e., we can assume it is plausibly real code */
   if( insn->id == X86_INS_JMP ){
     code->last_safe_offset = code->offset;
     code->last_safe_reloc = code->reloc_count;
@@ -324,6 +364,7 @@ void gen_indirect(mv_code_t *code, cs_insn *insn){
 }
 
 void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
+  bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
   /* If we have selected a chunk size that is not zero AND the instruction is not already aligned,
      pad to chunk size whenever we encounter either:
        -An instruction that does not evenly fit within a chunk.
@@ -331,7 +372,7 @@ void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
     Fill the padded area with NOP instructions.
   */
   if( code->chunk_size != 0 && code->offset % code->chunk_size != 0 &&
-      ( (code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address)) ||
+      ( (is_target) ||
       (code->chunk_size - (code->offset % code->chunk_size) < new_size) ) ){
     memset(code->code+code->offset, NOP, code->chunk_size - (code->offset % code->chunk_size));
     code->offset += code->chunk_size - (code->offset % code->chunk_size);
@@ -348,7 +389,22 @@ void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
   }
 }
 
-void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uint64_t target){
+void check_target(mv_code_t *code, cs_insn *insn){
+  bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
+  /*
+    Insert ONE extra nop if instruction is a target, so that all targets
+    start with 0x90, a requirement of the way we plan to deal with jump targets.
+  */
+  if( is_target ){
+    *(code->code+code->offset++) = 0x90;
+    /* Generate a relocation entry to patch the ORIGINAL text section at this target address */
+    /* Subtract 1 for 0x90 */
+    /* Set the bottom 2 bytes of offset, which will be masked off. */
+    gen_reloc(code, RELOC_IND, (code->offset-1)|0x00000003, insn->address);
+  }
+}
+
+void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target){
   // TODO: re-allocate when running out of space for relocations
   mv_reloc_t *reloc = (code->relocs + code->reloc_count);
   reloc->type = type;

@@ -11,8 +11,30 @@ printf("is_target: 0x%x\n", address);
   if( memcmp(prologue1, bytes, 3) == 0 ){
 printf("true: %hhx == %hhx\n", *prologue1, *bytes);
     return true;
+  }else if( address == 0x700015c || address == 0x7000162 ){
+    return true; // Special cases for example
   }
   return false;
+}
+
+/* Try to get call instruction aligned right */
+uint32_t __attribute__((aligned(16))) code_caller(uintptr_t addr, int arg){
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  __asm__ volatile("nop");
+  ((uint32_t (*)(uint32_t))addr)(arg);
 }
 
 int main(int argc, char** argv){
@@ -51,9 +73,9 @@ int main(int argc, char** argv){
 	free(new_code);*/
         mprotect((void*)new_address, 4096*pages, PROT_EXEC);
 
-        uint32_t result = ((uint32_t (*)(uint32_t))new_address+entry)(0);
+        uint32_t result = code_caller(new_address+entry,0);
         printf("Result for 0: %x\n", result);
-        result = ((uint32_t (*)(uint32_t))new_address+entry)(1);
+        result = code_caller(new_address+entry,1);
         printf("Result for 1: %x\n", result);
 	return 0;
 }

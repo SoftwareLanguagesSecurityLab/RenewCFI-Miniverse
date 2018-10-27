@@ -21,7 +21,7 @@ get_fstring_indirect:
 	mov eax,[esp+4]
         and eax,0x1
 	mov ecx,table
-	lea ecx,[ecx+4*eax]
+	mov ecx,[ecx+4*eax]
 	jmp ecx
 table:
 	dd get_msg1
