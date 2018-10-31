@@ -4,4 +4,4 @@
 .*
 *.a
 *.o
-peda-session-driver.txt
+peda-session-*.txt

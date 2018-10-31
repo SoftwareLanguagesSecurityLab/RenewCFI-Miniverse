@@ -1,7 +1,7 @@
 ;nasm -f elf fstring.asm
 BITS 32
-GLOBAL get_fstring
-GLOBAL get_fstring_indirect
+GLOBAL get_fstring:function
+GLOBAL get_fstring_indirect:function
 SECTION .text
 get_fstring:
 	mov eax,[esp+4]
