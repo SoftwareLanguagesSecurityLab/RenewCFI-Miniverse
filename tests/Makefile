@@ -14,4 +14,4 @@ so:
 	gcc -m32 fstring.h fstring.c fstring.o printer.o -shared -fPIC -o libtest.so 
 
 clean:
-	rm -f test *.o
+	rm -f test *.o *.so

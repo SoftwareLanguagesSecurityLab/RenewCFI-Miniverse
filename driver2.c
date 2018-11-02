@@ -7,6 +7,7 @@
 char* get_fstring(int index);
 char* get_fstring_indirect(int index);
 char* get_fstring_c(int index);
+char* print(int index);
 
 /* Simple example of a function prologue to test target alignment */
 uint8_t prologue1[] = {"\x55\x89\xe5"}; // push ebp; mov ebp, esp 
@@ -17,8 +18,10 @@ printf("is_target: 0x%x\n", address);
 printf("true: %hhx == %hhx\n", *prologue1, *bytes);
     return true;
   }else if( address == 0x700015c || address == 0x7000162 ){
+printf("true: Special case 1!\n");
     return true; // Special cases for example
-  }else if( (address & 0xfff) == 0x64c || (address & 0xfff) == 0x652 ){
+  }else if( (address & 0xfff) == 0x66c || (address & 0xfff) == 0x672 ){
+printf("true: Special case 2!\n");
     return true; // Special cases for example so
   }
   return false;
@@ -82,6 +85,7 @@ int main(int argc, char** argv){
 	uint32_t *mapping = gen_code(orig_code, code_size, address,
 		new_address, &new_size, 16, &is_target);
 
+	uintptr_t entry;
 	/* All calls, even successful ones, will cause a segfault because the
 	   destructor for the library will be called at the end of the program, but the execute
 	   permissions for the library code have been revoked. */
@@ -90,7 +94,12 @@ int main(int argc, char** argv){
         /* Works! */
 	//uintptr_t entry = 0x610;// Offset of function we want to execute (get_fstring)
  	/* Fails due to unknown corruption of lookup table entry */
-	uintptr_t entry = 0x633;// Offset of function we want to execute (get_fstring_indirect)
+	entry = 0x66c;
+	printf("get_msg1: 0x%x\n", mapping[entry]);
+	entry = 0x672;
+	printf("get_msg2: 0x%x\n", mapping[entry]);
+	//entry = 0x633;// Offset of function we want to execute (get_fstring_indirect)
+	entry = 0x698;// Offset of function we want to execute (print)
 	entry = mapping[entry];// Look up new entry point
 	free(mapping);
 

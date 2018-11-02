@@ -47,8 +47,8 @@ typedef struct mv_code_t{
 
 uint8_t indirect_template_before[] = "\x50\x8b";
 uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
-uint8_t indirect_template_mask_call[] = "\x25\xe0\xff\xff\x3f\x50\x58\x58\xff\x54\x24\xf8";
-uint8_t indirect_template_mask_jmp[] = "\x25\xe0\xff\xff\x3f\x50\x58\x58\xff\x64\x24\xf8";
+uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x54\x24\xf8";
+uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x64\x24\xf8";
 
 void gen_insn(mv_code_t *code, cs_insn *insn);
 void inline gen_ret(mv_code_t *code, cs_insn *insn);
@@ -396,6 +396,7 @@ void check_target(mv_code_t *code, cs_insn *insn){
     start with 0x90, a requirement of the way we plan to deal with jump targets.
   */
   if( is_target ){
+    printf("Generating reloc for target @ 0x%x (0x%x)\n", (uintptr_t)(code->code+code->offset), (uintptr_t)(code->offset|0x00000003));
     *(code->code+code->offset++) = 0x90;
     /* Generate a relocation entry to patch the ORIGINAL text section at this target address */
     /* Subtract 1 for 0x90 */

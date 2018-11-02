@@ -3,8 +3,8 @@ BITS 32
 EXTERN get_fstring
 EXTERN get_fstring_indirect
 EXTERN printf
-GLOBAL print_stuff
-GLOBAL print
+GLOBAL print_stuff:function
+GLOBAL print:function
 SECTION .text
 print_stuff:
 	push 0x0
@@ -45,3 +45,15 @@ print_stuff:
 ;	pop ebx
 ;	ret
 	
+print:
+	push 0x0
+	call print_stuff
+	pop eax
+	push 0x1
+	call print_stuff
+	pop eax
+	mov eax, [esp+4]
+	push eax
+	call get_fstring
+	pop ecx
+	ret
