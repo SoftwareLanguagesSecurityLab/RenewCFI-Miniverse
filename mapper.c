@@ -37,6 +37,7 @@ typedef struct mv_code_t{
   size_t reloc_size;
   size_t last_safe_reloc; // Last reloc before the most recent unconditional jump or ret
   uintptr_t base;
+  size_t orig_size;
   size_t code_size;
   uint8_t chunk_size;
   uint32_t offset;
@@ -49,6 +50,8 @@ uint8_t indirect_template_before[] = "\x50\x8b";
 uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
 uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x54\x24\xf8";
 uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x64\x24\xf8";
+
+bool is_pic(mv_code_t *code, uintptr_t address);
 
 void gen_insn(mv_code_t *code, cs_insn *insn);
 void inline gen_ret(mv_code_t *code, cs_insn *insn);
@@ -68,7 +71,6 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   mv_reloc_t rel;
   uint64_t cs_addr = (uintptr_t)address; // Capstone wants 64-bit address regardless of arch
   size_t r;
-  size_t orig_bytes_size; //Capstone decrements the original size variable, so we must save it
   size_t trimmed_bytes = 0; // This variable is optional, as it's just used to collect a metric.
   code.offset = 0;
   code.last_safe_offset = 0;
@@ -78,7 +80,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   code.code = (uint8_t*) new_address;// Will allocate more pages if needed
   code.code_size = 4096;// Assume we start with only one page allocated
   code.chunk_size = chunk_size;
-  orig_bytes_size = bytes_size;
+  code.orig_size = bytes_size; //Capstone decrements the original size variable, so we must save it
   code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size ); //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
   code.last_safe_reloc = 0;
@@ -116,8 +118,9 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
     }
   }
 
+printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_size);
   /* Make original text section writable before patching relocs, since we will need to modify it */
-  mprotect((void*)address, bytes_size, PROT_READ|PROT_WRITE);
+  mprotect((void*)address, code.orig_size, PROT_READ|PROT_WRITE);
  
   printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
   // Loop through relocations and patch target destinations
@@ -127,7 +130,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
       /* If target is in mapping, update entry.  Otherwise, we probably want to somehow check
          if this target is a valid target in a separate module.
          TODO: Handle targets outside mapping! */
-      if( rel.target - code.base >= 0 && rel.target - code.base < orig_bytes_size ){
+      if( rel.target - code.base >= 0 && rel.target - code.base < code.orig_size ){
         printf("%u\t0x%x (%u)\t0x%x\t0x%x\t\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
         *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
       }else{
@@ -143,9 +146,9 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   }
 
   /* Remove write permission from original text section after modifying it */
-  mprotect((void*)address, bytes_size, PROT_READ);
+  mprotect((void*)address, code.orig_size, PROT_READ);
 
-  printf("Original code size: %d\n", orig_bytes_size);
+  printf("Original code size: %d\n", code.orig_size);
   printf("Generated code size: %d\n", code.offset);
   printf("Total bytes trimmed: %d\n", trimmed_bytes);
   //free(code.mapping);
@@ -201,8 +204,16 @@ void gen_insn(mv_code_t* code, cs_insn *insn){
     default:
       gen_padding(code, insn, insn->size); 
       check_target(code, insn);
-      memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
-      code->offset += insn->size; // Since instruction is not modified, increment by instruction size
+      /* Special case code for call to PIC, specifically the get_pc_thunk pattern.
+         If PIC, we need to change instruction to read the argument passed on the stack
+         instead of the return address */
+      if( is_pic(code, insn->address) ){
+        *(uint32_t*)(code->code+code->offset) = 0x04244c8b; // Encoding of mov ecx,[esp+4]
+        code->offset += 4; // Size of new instruction 
+      }else{
+        memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
+        code->offset += insn->size; // Since insn is not modified, increment by instruction size
+      }
   }
 }
 
@@ -267,11 +278,29 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       code->last_safe_reloc = code->reloc_count + 1;
     /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
     case CALL_REL_NEAR:
-      gen_padding(code, insn, 5); 
-      check_target(code, insn);
-      *(code->code+code->offset) = *(insn->bytes);
       /* Retrieve jmp target offset and add to relocation table */
       disp = *(int32_t*)(insn->bytes+1);
+      /* Special case code for call to PIC, specifically the get_pc_thunk pattern.
+         If call to PIC, we need to push original ret address to pass to thunk, then
+         after thunk returns, move stack back to where it was before */
+      if( is_pic(code, insn->address + insn->size + disp) && *(insn->bytes) == CALL_REL_NEAR ){
+        /* Accommodate extra 5 bytes from push, but since this is a call, do not include
+           bytes from add; the padding will align the call to the end of a chunk, so the add
+           will be safely at the start of the next chunk */
+        gen_padding(code, insn, 10); 
+        *(code->code+code->offset) = 0x68; // push imm32
+        *(uint32_t*)(code->code+code->offset+1) = insn->address + insn->size; // return address
+        *(code->code+code->offset+5) = *(insn->bytes); // original call
+        *(code->code+code->offset+10) = 0x83; // add
+        *(code->code+code->offset+11) = 0xc4; // esp,
+        *(code->code+code->offset+12) = 0x04; // 4
+        gen_reloc(code, RELOC_OFF, code->offset+6, insn->address+5+disp);
+        code->offset += 13; // length of push + call + add esp,4
+        break;
+      }
+      gen_padding(code, insn, 5); 
+      check_target(code, insn); //TODO: Will this incorrectly align a call identified as jmp target?
+      *(code->code+code->offset) = *(insn->bytes);
       //disp = code->mapping[insn->address+disp-code->base] - code->offset;
       //memcpy(code->code+code->offset+1, disp, 4);
       printf("Gen: %s\t%s\t(%llx + 5 + %x)\n", insn->mnemonic, insn->op_str, insn->address, disp);
@@ -412,4 +441,16 @@ void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target)
   reloc->offset = offset;
   reloc->target = target;
   code->reloc_count++;
+}
+
+/* Hardcoded special case to handle get_pc_thunk.  This will not work for arbitrary PIC, but
+   hopefully this will be sufficient for automatically generated PIC on Linux */
+bool is_pic(mv_code_t *code, uintptr_t address){
+  /* Check range, since some target addresses may be nonsense */
+  /* Encoding of "mov ecx,[esp] ; ret", which is the code in get_pc_thunk */
+  if( address >= code->base && address < code->base + code->orig_size && 
+      *(uint32_t*)(address) == 0xc3240c8b ){
+    return true;
+  }
+  return false;
 }

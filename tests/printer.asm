@@ -1,5 +1,6 @@
 ;nasm -f elf fstring.asm
 BITS 32
+EXTERN get_fstring_c
 EXTERN get_fstring
 EXTERN get_fstring_indirect
 EXTERN printf
@@ -18,6 +19,20 @@ print_stuff:
 	call printf
 	pop eax
 	pop eax
+
+	push 0x1
+	call get_fstring_indirect
+	pop edx
+        push eax
+	mov edx, [esp+8]
+	push edx
+	call get_fstring_c
+        xchg eax, [esp+4]
+	mov [esp],eax
+	call printf
+	pop eax
+	pop eax
+	
 	;mov eax, 0x1
 	;push eax
 	;mov edx,[esp+8]

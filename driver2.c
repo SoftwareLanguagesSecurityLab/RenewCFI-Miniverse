@@ -6,7 +6,7 @@
 
 char* get_fstring(int index);
 char* get_fstring_indirect(int index);
-char* get_fstring_c(int index);
+//char* get_fstring_c(int index);
 char* print(int index);
 
 /* Simple example of a function prologue to test target alignment */
@@ -20,7 +20,7 @@ printf("true: %hhx == %hhx\n", *prologue1, *bytes);
   }else if( address == 0x700015c || address == 0x7000162 ){
 printf("true: Special case 1!\n");
     return true; // Special cases for example
-  }else if( (address & 0xfff) == 0x66c || (address & 0xfff) == 0x672 ){
+  }else if( (address & 0xfff) == 0x68c || (address & 0xfff) == 0x692 ){
 printf("true: Special case 2!\n");
     return true; // Special cases for example so
   }
@@ -52,7 +52,7 @@ int main(int argc, char** argv){
 
 	/* Printing address of function in library, because otherwise the library
 	   will not be loaded. */
-	printf("0x%x\n", (uintptr_t)&get_fstring_c);
+	printf("0x%x\n", (uintptr_t)&print);
 	/* Getting the address of a function in a library unfortunately
 	   returns the address of its plt entry, which is not what we want.
 	   In order to get the address of the code I want to rewrite, I will use
@@ -99,7 +99,7 @@ int main(int argc, char** argv){
 	entry = 0x672;
 	printf("get_msg2: 0x%x\n", mapping[entry]);
 	//entry = 0x633;// Offset of function we want to execute (get_fstring_indirect)
-	entry = 0x698;// Offset of function we want to execute (print)
+	entry = 0x6d9;// Offset of function we want to execute (print)
 	entry = mapping[entry];// Look up new entry point
 	free(mapping);
 
