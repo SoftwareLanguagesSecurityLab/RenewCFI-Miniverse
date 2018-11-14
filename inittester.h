@@ -1,0 +1,2 @@
+
+void* miniverse_init();
