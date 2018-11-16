@@ -54,6 +54,7 @@ int main(int argc, char** argv){
 
         mmap_hook(&mmap);
         mprotect_hook(&mprotect);
+        register_handler();
 
 	/* Printing address of function in library, because otherwise the library
 	   will not be loaded. */
@@ -113,7 +114,7 @@ int main(int argc, char** argv){
 	mmap((void*)new_address, 4096*pages, PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); 
         memcpy((void*)new_address, new_code, new_size);
 	free(new_code);*/
-        mprotect_shim((void*)new_address, 4096*pages, PROT_EXEC);
+        mprotect((void*)new_address, 4096*pages, PROT_EXEC);
 
         uint32_t result = code_caller(new_address+entry,0);
         printf("Result for 0: %s (%x)\n", (uint8_t*)result, result );

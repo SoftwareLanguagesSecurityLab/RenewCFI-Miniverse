@@ -12,25 +12,36 @@
 #include <signal.h>
 #include "handlers.h"
 
-void *(*mmap_real)(void *addr, size_t length, int prot, int flags,
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <ucontext.h>
+#include <sys/ucontext.h> // For hardware-specific registers (TODO: Does not work as expected!)
+
+void *__real_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset);
 
-int (*mprotect_real)(void *addr, size_t len, int prot);
+int __real_mprotect(void *addr, size_t len, int prot);
 
-/* TODO: Actually insert hooks that redirect calls to mmap and mprotect */
+/* TODO: Actually insert hooks that redirect calls to mmap and mprotect
+   For now we can actually rely on the dynamic loader to hook the functions
+   for us.  When we link, we replace references to the symbol with our wrappers.
+   Perhaps we could use L_PRELOAD at runtime, or our static rewriter.  Regardless,
+   the simplest hook for now shouldn't need these.  */
 void mmap_hook(void *addr){
-  mmap_real = mmap;
+  //mmap_real = mmap;
 }
 
 void mprotect_hook(void *addr){
-  mprotect_real = mprotect;
+  //mprotect_real = mprotect;
 }
 
 void register_handler(){
   struct sigaction new_action, old_action;
-  new_action.sa_handler = sigsegv_handler;
+  /* Use sa_sigaction instead of sa_handler */
+  new_action.sa_sigaction = sigsegv_handler;
   sigemptyset(&new_action.sa_mask); /* Don't block other signals */
-  new_action.sa_flags = 0;
+  new_action.sa_flags = SA_SIGINFO; /* Specifies we want to use sa_sigaction */
   sigaction( SIGSEGV, &new_action, &old_action );
 }
 
@@ -38,28 +49,38 @@ void register_handler(){
    condition, as we don't want an application under our control to
    ever load any new executable code without it going through our
    rewriting process first. */
-void *mmap_shim(void *addr, size_t length, int prot, int flags,
+void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
-    prot &= !PROT_EXEC; /* Unset the exec bit */
+    prot &= ~PROT_EXEC; /* Unset the exec bit */
   }
-  mmap_real(addr,length,prot,flags,fd,offset);
+  __real_mmap(addr,length,prot,flags,fd,offset);
 }
 
 /* Prevent any page from dynamically being allowed to have exec permissions
    added, and if any other permissions are added we also want to remove exec
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
-int mprotect_shim(void *addr, size_t len, int prot){
+int __wrap_mprotect(void *addr, size_t len, int prot){
+  printf("PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", PROT_EXEC, ~PROT_EXEC, prot);
   //if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
-    prot &= !PROT_EXEC; /* Unconditionally unset the exec bit */
+    prot &= ~PROT_EXEC; /* Unconditionally unset the exec bit */
   //}
-  mprotect_real(addr,len,prot);
+  __real_mprotect(addr,len,prot);
 }
 
 /* TODO: Keep track of which pages we have already dealt with previously,
    as we only need to rewrite the contents once UNLESS further changes are
-   made, so we need to know if a page is "dirty" or not. */
-void sigsegv_handler(int signum){
-  
+   made, so we need to know if a page is "dirty" or not.
+   Right now, just always try to rewrite the page our target is on, and NOT a
+   remembered region from previous calls to mprotect or mmap, as we maybe
+   should eventually do. */
+void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
+  //info->si_addr = (void*)( (uintptr_t)(&mmap_hook) + 5 ); /* Try setting return target to a ret */
+  ucontext_t *con = (ucontext_t*)ucontext;
+  /* Machine-dependent definition of processor state: set new value for eip */
+  /* TODO: Figure out how to refer to REG_EIP rather than this magic number 14 */
+  /* Set target to a ret instruction, just for testing.  Next, we will redirect
+     this to the rewritten entry point of the code. */
+  con->uc_mcontext.gregs[14] = (uintptr_t)(&mmap_hook) + 4;
 }
