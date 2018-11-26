@@ -12,6 +12,8 @@
 #include <signal.h>
 #include "handlers.h"
 
+#include "miniverse.h"
+ 
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -51,6 +53,7 @@ void register_handler(){
    rewriting process first. */
 void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
+  printf("(mmap) PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", PROT_EXEC, ~PROT_EXEC, prot);
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
     prot &= ~PROT_EXEC; /* Unset the exec bit */
   }
@@ -62,13 +65,20 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
-  printf("PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", PROT_EXEC, ~PROT_EXEC, prot);
+  printf("(mprotect) PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", PROT_EXEC, ~PROT_EXEC, prot);
   //if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
     prot &= ~PROT_EXEC; /* Unconditionally unset the exec bit */
   //}
   __real_mprotect(addr,len,prot);
 }
 
+/* Temporary hack to prevent rewriting twice; if we don't do this, doing mmap on an already allocated
+   new code area doesn't seem to change the permissions, so it stays executable.  We eventually will
+   only want to rewrite again if changes were made to the original pages, and we would want to unmap
+   the old rewritten code in that case anyway.
+   TODO: Not thread safe, doesn't handle multiple code regions, etc, etc. */
+bool already_rewritten = false;
+uint32_t *mapping = 0;
 /* TODO: Keep track of which pages we have already dealt with previously,
    as we only need to rewrite the contents once UNLESS further changes are
    made, so we need to know if a page is "dirty" or not.
@@ -82,5 +92,35 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   /* TODO: Figure out how to refer to REG_EIP rather than this magic number 14 */
   /* Set target to a ret instruction, just for testing.  Next, we will redirect
      this to the rewritten entry point of the code. */
-  con->uc_mcontext.gregs[14] = (uintptr_t)(&mmap_hook) + 4;
+  uintptr_t target = con->uc_mcontext.gregs[14];
+  uintptr_t address = (uintptr_t)(target - (target % 0x1000)); // addr of 1st inst to be disassembled
+  uintptr_t new_address = 0x9000000;      // address of start of generated code
+
+  if( !already_rewritten ){
+  
+    uint8_t *orig_code = (uint8_t *)(target - (target % 0x1000));
+    size_t code_size = 0x1000;
+    size_t new_size = 0;
+  
+    mmap((void*)new_address, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  
+    mapping = gen_code(orig_code, code_size, address, new_address,
+        &new_size, 16, &is_target);
+  
+    /* Don't free the mapping because we will need it for subsequent calls!  Do we have to keep
+       ALL mappings for all rewritten code regions always allocated so we can look up the target in
+       the handler? */
+    //free(mapping);
+  
+    size_t pages = (new_size/4096)+1;
+  
+    /* Call the real, un-wrapped mprotect to actually set these pages as executable */
+    __real_mprotect((void*)new_address, 4096*pages, PROT_EXEC);
+
+    already_rewritten = true;
+  }
+
+  /* TODO: Refer to REG_EIP without a magic number */
+  /* Set instruction pointer to corresponding target in rewritten code */;
+  con->uc_mcontext.gregs[14] = (uintptr_t)(new_address + mapping[target-address]);
 }

@@ -1,4 +1,7 @@
 #include <signal.h>
+#include <inttypes.h>
+#include <stdbool.h>
+bool is_target(uintptr_t address, uint8_t *bytes);
 void mmap_hook(void *addr);
 void mprotect_hook(void *addr);
 void register_handler();

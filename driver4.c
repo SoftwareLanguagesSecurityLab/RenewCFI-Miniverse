@@ -75,47 +75,16 @@ int main(int argc, char** argv){
 	*line_off = '\0';
 	sscanf(line, "%x", &addr_start);	
 	
+	/* Make library non-executable */
+        mprotect((void*)addr_start, 4096, PROT_READ);
 
-	uint8_t *orig_code = (uint8_t *)(addr_start);
-	/*size_t code_size = 43;*/	// size of @code buffer above
-	size_t code_size = 0x6ff;
-	uintptr_t address = (uintptr_t)orig_code;// address of first instruction to be disassembled
-	uintptr_t new_address = 0x9000000;	// address of start of generated code
-	size_t new_size = 0;
-
-	mmap((void*)new_address, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); 
-
-	uint32_t *mapping = gen_code(orig_code, code_size, address,
-		new_address, &new_size, 16, &is_target);
-
-	uintptr_t entry;
-	/* All calls, even successful ones, will cause a segfault because the
-	   destructor for the library will be called at the end of the program, but the execute
-	   permissions for the library code have been revoked. */
-	/* Fails due to lack of PIC support */
-	//uintptr_t entry = 0x5db;// Offset of function we want to execute (get_fstring_c)
-        /* Works! */
-	//uintptr_t entry = 0x610;// Offset of function we want to execute (get_fstring)
- 	/* Fails due to unknown corruption of lookup table entry */
-	entry = 0x66c;
-	printf("get_msg1: 0x%x\n", mapping[entry]);
-	entry = 0x672;
-	printf("get_msg2: 0x%x\n", mapping[entry]);
-	//entry = 0x633;// Offset of function we want to execute (get_fstring_indirect)
-	entry = 0x6d9;// Offset of function we want to execute (print)
-	entry = mapping[entry];// Look up new entry point
-	free(mapping);
-
-        size_t pages = (new_size/4096)+1;
-	/*
-	mmap((void*)new_address, 4096*pages, PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); 
-        memcpy((void*)new_address, new_code, new_size);
-	free(new_code);*/
-        mprotect((void*)new_address, 4096*pages, PROT_EXEC);
-
-        uint32_t result = code_caller(new_address+entry,0);
+        uint32_t result = code_caller((uintptr_t)print,0);
         printf("Result for 0: %s (%x)\n", (uint8_t*)result, result );
-        result = code_caller(new_address+entry,1);
+        result = code_caller((uintptr_t)print,1);
         printf("Result for 1: %s (%x)\n", (uint8_t*)result, result );
 	return 0;
+
+	/* Execution will end in a segfault because the
+	   destructor for the library will be called at the end of the program, but the execute
+	   permissions for the library code have been revoked. */
 }
