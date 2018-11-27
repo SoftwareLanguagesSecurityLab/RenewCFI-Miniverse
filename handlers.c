@@ -101,6 +101,11 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
     uint8_t *orig_code = (uint8_t *)(target - (target % 0x1000));
     size_t code_size = 0x1000;
     size_t new_size = 0;
+
+    /* Set original code to be readable and writable, regardless of what it was set to before,
+       so we may disassemble it and write to it.
+       TODO: Set as read-only afterwards to detect changes */
+    __real_mprotect((void*)orig_code, 4096, PROT_READ|PROT_WRITE);
   
     mmap((void*)new_address, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   
