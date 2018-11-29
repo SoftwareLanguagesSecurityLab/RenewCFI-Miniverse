@@ -79,6 +79,10 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
    TODO: Not thread safe, doesn't handle multiple code regions, etc, etc. */
 bool already_rewritten = false;
 uint32_t *mapping = 0;
+uintptr_t new_address = 0x0000000;// address of start of generated code; let kernel decide where
+// Allocate a larger size than the rewriter thinks, in order to reserve enough space to accommodate
+// our expanded rewritten code. TODO: Handle this in a less hackish way
+#define NEW_ALLOC_SAFETY 4
 /* TODO: Keep track of which pages we have already dealt with previously,
    as we only need to rewrite the contents once UNLESS further changes are
    made, so we need to know if a page is "dirty" or not.
@@ -94,7 +98,6 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      this to the rewritten entry point of the code. */
   uintptr_t target = con->uc_mcontext.gregs[14];
   uintptr_t address = (uintptr_t)(target - (target % 0x1000)); // addr of 1st inst to be disassembled
-  uintptr_t new_address = 0x9000000;      // address of start of generated code
 
   if( !already_rewritten ){
   
@@ -107,7 +110,7 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
        TODO: Set as read-only afterwards to detect changes */
     __real_mprotect((void*)orig_code, 4096, PROT_READ|PROT_WRITE);
   
-    mmap((void*)new_address, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    new_address = (uintptr_t)mmap((void*)new_address, 4096*NEW_ALLOC_SAFETY, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   
     mapping = gen_code(orig_code, code_size, address, new_address,
         &new_size, 16, &is_target);
