@@ -41,7 +41,9 @@ void mprotect_hook(void *addr){
 void register_handler(){
   struct sigaction new_action, old_action;
   /* Use sa_sigaction instead of sa_handler */
-  new_action.sa_sigaction = sigsegv_handler;
+  new_action.sa_handler = NULL;
+  void* sig_handler = &sigsegv_handler;
+  new_action.sa_sigaction = sig_handler;
   sigemptyset(&new_action.sa_mask); /* Don't block other signals */
   new_action.sa_flags = SA_SIGINFO; /* Specifies we want to use sa_sigaction */
   sigaction( SIGSEGV, &new_action, &old_action );
@@ -57,7 +59,7 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
     prot &= ~PROT_EXEC; /* Unset the exec bit */
   }
-  __real_mmap(addr,length,prot,flags,fd,offset);
+  return __real_mmap(addr,length,prot,flags,fd,offset);
 }
 
 /* Prevent any page from dynamically being allowed to have exec permissions
@@ -69,7 +71,7 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
   //if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
     prot &= ~PROT_EXEC; /* Unconditionally unset the exec bit */
   //}
-  __real_mprotect(addr,len,prot);
+  return __real_mprotect(addr,len,prot);
 }
 
 /* Temporary hack to prevent rewriting twice; if we don't do this, doing mmap on an already allocated

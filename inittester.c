@@ -28,6 +28,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define REGISTER_HANDLER_OFFSET 0x12b7a0
+//#define REGISTER_HANDLER_OFFSET 0x141cdd
+#define GEN_CODE_OFFSET 0x1bd
+//#define GEN_CODE_OFFSET 0x1671c
+
+// An approximation of start of data section, rounded down to nearest page boundary
+#define DATA_OFFSET_START 0x1d1000
+//#define DATA_OFFSET_START 0x1e7000
+#define DATA_SIZE 0x114ff0
+//#define DATA_SIZE 0x114fd0
+
+// An approximation of start of bss section, rounded down to nearest page boundary
+#define BSS_OFFSET_START 0x2e5000
+//#define BSS_OFFSET_START 0x2fb000
+#define BSS_SIZE 0x1af0
+
 /* Map memory for miniverse library and set up handlers. 
    */
 void* miniverse_init(){
@@ -39,5 +55,13 @@ void* miniverse_init(){
   int fd = open("libminiversebin", O_RDONLY);
   mmap((void*)0xa000000, st.st_size, PROT_EXEC, MAP_PRIVATE, fd, 0);
   close(fd);
-  return (void*)0xa000ef7;
+  /* Set data section of library to be writable and not executable */
+  mprotect((void*)(0xa000000+DATA_OFFSET_START), DATA_SIZE, PROT_WRITE);
+  /* Map bss section with zeros */
+  //mprotect((void*)(0xa000000+BSS_OFFSET_START), BSS_SIZE, PROT_WRITE);
+  munmap((void*)(0xa000000+BSS_OFFSET_START), BSS_SIZE);
+  mmap((void*)(0xa000000+BSS_OFFSET_START), BSS_SIZE, PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+  void (*register_handler)() = (void (*)())(0xa000000 + REGISTER_HANDLER_OFFSET);
+  register_handler();
+  return (void*)0x0; /* Do not actually return any pointer, as the handler will call gen_code */
 }
