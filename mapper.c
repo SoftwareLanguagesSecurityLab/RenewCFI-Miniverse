@@ -62,6 +62,9 @@ void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size);
 void check_target(mv_code_t *code, cs_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target);
 
+/* Dynamically set capstone memory management functions */
+cs_opt_mem setup;
+
 uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, uintptr_t new_address,
     size_t *new_size, uint8_t chunk_size, bool (*is_target)(uintptr_t address, uint8_t *bytes)){
   csh handle;
@@ -87,6 +90,16 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
   code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
   code.is_target = is_target;
   
+  /* Dynamically set capstone memory management functions.
+     Current tests are having issues with capstone resolving cs_mem_malloc,
+     and this will hopefully help */
+  setup.malloc = malloc;
+  setup.calloc = calloc;
+  setup.realloc = realloc;
+  setup.free = free;
+  setup.vsnprintf = vsnprintf;
+  cs_option(0, CS_OPT_MEM, &setup);
+
   ss_open(CS_ARCH_X86, CS_MODE_32, &handle);
   insn = cs_malloc(handle);
 

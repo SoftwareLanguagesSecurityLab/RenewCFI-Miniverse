@@ -28,21 +28,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define REGISTER_HANDLER_OFFSET 0x12b7a0
+#define REGISTER_HANDLER_OFFSET 0x140803
+//#define REGISTER_HANDLER_OFFSET 0x1407bd
+//#define REGISTER_HANDLER_OFFSET 0x12b7a0
 //#define REGISTER_HANDLER_OFFSET 0x141cdd
-#define GEN_CODE_OFFSET 0x1bd
+//#define GEN_CODE_OFFSET 0x1bd
 //#define GEN_CODE_OFFSET 0x1671c
 
 // An approximation of start of data section, rounded down to nearest page boundary
-#define DATA_OFFSET_START 0x1d1000
-//#define DATA_OFFSET_START 0x1e7000
-#define DATA_SIZE 0x114ff0
-//#define DATA_SIZE 0x114fd0
+//#define DATA_OFFSET_START 0x1d1000
+#define DATA_OFFSET_START 0x1e7000
+//#define DATA_SIZE 0x114ff0
+#define DATA_SIZE 0x114fd0
 
 // An approximation of start of bss section, rounded down to nearest page boundary
-#define BSS_OFFSET_START 0x2e5000
-//#define BSS_OFFSET_START 0x2fb000
-#define BSS_SIZE 0x1af0
+//#define BSS_OFFSET_START 0x2e5000
+#define BSS_OFFSET_START 0x2fb000
+#define BSS_SIZE 0x1b04
+//#define BSS_SIZE 0x1af0
 
 /* Map memory for miniverse library and set up handlers. 
    */

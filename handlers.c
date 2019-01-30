@@ -49,6 +49,12 @@ void register_handler(){
   sigaction( SIGSEGV, &new_action, &old_action );
 }
 
+/* Create wrapper for printf that performs a no-op to try
+   and test whether removing calls to printf solves our problem */
+int __wrap_printf(const char * format, ...){
+  return 0; // Perform no-op instead of printing something
+}
+
 /* TODO: consider never allowing setting the exec bit under any
    condition, as we don't want an application under our control to
    ever load any new executable code without it going through our
@@ -112,7 +118,7 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
        TODO: Set as read-only afterwards to detect changes */
     __real_mprotect((void*)orig_code, 4096, PROT_READ|PROT_WRITE);
   
-    new_address = (uintptr_t)mmap((void*)new_address, 4096*NEW_ALLOC_SAFETY, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    new_address = (uintptr_t)__real_mmap((void*)new_address, 4096*NEW_ALLOC_SAFETY, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   
     mapping = gen_code(orig_code, code_size, address, new_address,
         &new_size, 16, &is_target);
