@@ -53,66 +53,56 @@ uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x64
 
 bool is_pic(mv_code_t *code, uintptr_t address);
 
-void gen_insn(mv_code_t *code, cs_insn *insn);
-void inline gen_ret(mv_code_t *code, cs_insn *insn);
-void inline gen_cond(mv_code_t *code, cs_insn *insn);
-void inline gen_uncond(mv_code_t *code, cs_insn *insn);
-void gen_indirect(mv_code_t *code, cs_insn *insn);
-void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size);
-void check_target(mv_code_t *code, cs_insn *insn);
+void gen_insn(mv_code_t *code, ss_insn *insn);
+void inline gen_ret(mv_code_t *code, ss_insn *insn);
+void inline gen_cond(mv_code_t *code, ss_insn *insn);
+void inline gen_uncond(mv_code_t *code, ss_insn *insn);
+void gen_indirect(mv_code_t *code, ss_insn *insn);
+void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size);
+void check_target(mv_code_t *code, ss_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target);
 
-/* Dynamically set capstone memory management functions */
-cs_opt_mem setup;
-
-uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, uintptr_t new_address,
-    size_t *new_size, uint8_t chunk_size, bool (*is_target)(uintptr_t address, uint8_t *bytes)){
-  csh handle;
-  cs_insn *insn;
+uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
+    uintptr_t new_address, size_t *new_size, uint8_t chunk_size,
+    bool (*is_target)(uintptr_t address, uint8_t *bytes)){
+  ss_handle handle;
+  ss_insn insn;
   uint8_t result;
   mv_code_t code;
   mv_reloc_t rel;
-  uint64_t cs_addr = (uintptr_t)address; // Capstone wants 64-bit address regardless of arch
+  pa_entry_t mapping_mem;
+  pa_entry_t reloc_mem;
   size_t r;
   size_t trimmed_bytes = 0; // This variable is optional, as it's just used to collect a metric.
   code.offset = 0;
   code.last_safe_offset = 0;
   code.mask = -1 ^ (chunk_size-1); // TODO: Mask off top bits in future
   code.base = address;
-  code.mapping = malloc( sizeof(uint32_t) * bytes_size );
+  page_alloc( &mapping_mem, sizeof(uint32_t) * bytes_size );
+  code.mapping = mapping_mem.address;
   code.code = (uint8_t*) new_address;// Will allocate more pages if needed
   code.code_size = 4096;// Assume we start with only one page allocated
   code.chunk_size = chunk_size;
   code.orig_size = bytes_size; //Capstone decrements the original size variable, so we must save it
-  code.relocs = malloc( sizeof(mv_reloc_t) * bytes_size ); //Will re-alloc if more relocs needed
+  page_alloc( &reloc_mem, sizeof(mv_reloc_t) * bytes_size );
+  code.relocs = reloc_mem.address; //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
   code.last_safe_reloc = 0;
   code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
   code.is_target = is_target;
   
-  /* Dynamically set capstone memory management functions.
-     Current tests are having issues with capstone resolving cs_mem_malloc,
-     and this will hopefully help */
-  setup.malloc = malloc;
-  setup.calloc = calloc;
-  setup.realloc = realloc;
-  setup.free = free;
-  setup.vsnprintf = vsnprintf;
-  cs_option(0, CS_OPT_MEM, &setup);
+  ss_open(SS_MODE_32, &handle, bytes, bytes_size, (uint64_t)address);
 
-  ss_open(CS_ARCH_X86, CS_MODE_32, &handle);
-  insn = cs_malloc(handle);
-
-  while( result = ss_disasm_iter(handle, &bytes, &bytes_size, &cs_addr, insn) ){
+  while( result = ss_disassemble(&handle, &insn) ){
     if( result == SS_SUCCESS ){
-      printf("0x%llx: %s\t%s\t (%x)\n", insn->address, insn->mnemonic, insn->op_str, code.offset);
-      code.mapping[insn->address-code.base] = code.offset; // Set offset of instruction in mapping
-      gen_insn(&code, insn);
-    }else if( insn->id == X86_INS_JMP ){ // Special jmp instruction
+      printf("0x%llx: %s\t(%x)\n", insn.address, insn.insn_str, code.offset);
+      code.mapping[insn.address-code.base] = code.offset; // Set offset of instruction in mapping
+      gen_insn(&code, &insn);
+    }else if( insn.id == SS_INS_JMP ){ // Special jmp instruction
       /* TODO: Patch special instruction */ 
-      printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
-      gen_insn(&code, insn);
-    }else{ // Instruction is X86_INS_HLT; special hlt instruction
+      printf("0x%llx: %s\t(SPECIAL)\n", insn.address, insn.insn_str);
+      gen_insn(&code, &insn);
+    }else{ // Instruction is SS_INS_HLT; special hlt instruction
       /* Roll back to last unconditional control flow instruction, because all code following it
          ends up potentially flowing into an invalid instruction */
       /* Since we stop at unconditional jumps, and roll back to them whenever we encounter this
@@ -122,7 +112,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address, u
          TODO: We should not allow spare bytes to remain outside the safely generated code, so any
          extra space still allocated that we are not using (such as the rest of a page) should be
          filled with hlt instructions */
-      printf("0x%llx: %s\t%s\t(SPECIAL)\n", insn->address, insn->mnemonic, insn->op_str);
+      printf("0x%llx: %s\t(SPECIAL)\n", insn.address, insn.insn_str);
       printf("%u bytes trimmed\n", code.offset - code.last_safe_offset);
       trimmed_bytes += (code.offset - code.last_safe_offset);
       code.offset = code.last_safe_offset;
@@ -165,13 +155,13 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   printf("Generated code size: %d\n", code.offset);
   printf("Total bytes trimmed: %d\n", trimmed_bytes);
   //free(code.mapping);
-  free(code.relocs);
+  page_free(&reloc_mem);
   *new_size = code.code_size;
-  return code.mapping;
+  return code.mapping;// TODO: return value that allows caller to free mapping
 }
 
 /* Generate a translated version of an instruction to place into generated code buffer. */
-void gen_insn(mv_code_t* code, cs_insn *insn){
+void gen_insn(mv_code_t* code, ss_insn *insn){
   /* Expand allocated memory for code to fit additional instructions and padding */
   if( code->offset + (3*code->chunk_size) >= code->code_size ){
     /* Allocate one new page and increase code size to reflect the new size */
@@ -183,33 +173,33 @@ void gen_insn(mv_code_t* code, cs_insn *insn){
   /* Rewrite instruction, using the instruction id to determine what kind
      of instruction it is */
   switch( insn->id ){
-    case X86_INS_RET:
+    case SS_INS_RET:
       gen_ret(code, insn);
       break;
-    case X86_INS_JMP:
-    case X86_INS_CALL:
+    case SS_INS_JMP:
+    case SS_INS_CALL:
       /* generate unconditional control flow */
       gen_uncond(code, insn);
       break;   
-    case X86_INS_JAE:
-    case X86_INS_JA:
-    case X86_INS_JBE:
-    case X86_INS_JB:
-    case X86_INS_JCXZ:
-    case X86_INS_JECXZ:
-    case X86_INS_JE:
-    case X86_INS_JGE:
-    case X86_INS_JG:
-    case X86_INS_JLE:
-    case X86_INS_JL:
-    case X86_INS_JNE:
-    case X86_INS_JNO:
-    case X86_INS_JNP:
-    case X86_INS_JNS:
-    case X86_INS_JO:
-    case X86_INS_JP:
-    case X86_INS_JRCXZ:
-    case X86_INS_JS:
+    case SS_INS_JAE:
+    case SS_INS_JA:
+    case SS_INS_JBE:
+    case SS_INS_JB:
+    case SS_INS_JCXZ:
+    case SS_INS_JECXZ:
+    case SS_INS_JE:
+    case SS_INS_JGE:
+    case SS_INS_JG:
+    case SS_INS_JLE:
+    case SS_INS_JL:
+    case SS_INS_JNE:
+    case SS_INS_JNO:
+    case SS_INS_JNP:
+    case SS_INS_JNS:
+    case SS_INS_JO:
+    case SS_INS_JP:
+    case SS_INS_JRCXZ:
+    case SS_INS_JS:
       /* generate conditional control flow */
       gen_cond(code, insn);
       break;
@@ -230,7 +220,7 @@ void gen_insn(mv_code_t* code, cs_insn *insn){
   }
 }
 
-void inline gen_ret(mv_code_t *code, cs_insn *insn){
+void inline gen_ret(mv_code_t *code, ss_insn *insn){
   /* TODO: Handle far returns */
   /* TODO: Handle returns that pop extra bytes from stack */
   if( *(insn->bytes) == RET_NEAR ){
@@ -248,7 +238,7 @@ void inline gen_ret(mv_code_t *code, cs_insn *insn){
   }
 }
 
-void inline gen_cond(mv_code_t *code, cs_insn *insn){
+void inline gen_cond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
@@ -279,7 +269,7 @@ void inline gen_cond(mv_code_t *code, cs_insn *insn){
   }
 }
 
-void inline gen_uncond(mv_code_t *code, cs_insn *insn){
+void inline gen_uncond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
@@ -316,7 +306,7 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
       *(code->code+code->offset) = *(insn->bytes);
       //disp = code->mapping[insn->address+disp-code->base] - code->offset;
       //memcpy(code->code+code->offset+1, disp, 4);
-      printf("Gen: %s\t%s\t(%llx + 5 + %x)\n", insn->mnemonic, insn->op_str, insn->address, disp);
+      printf("Gen: %s\t(%llx + 5 + %x)\n", insn->insn_str, insn->address, disp);
       /* Relocation target is instruction address + instruction length + displacement */
       gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
       code->offset += 5;
@@ -342,7 +332,7 @@ void inline gen_uncond(mv_code_t *code, cs_insn *insn){
   }
 }
 
-void gen_indirect(mv_code_t *code, cs_insn *insn){
+void gen_indirect(mv_code_t *code, ss_insn *insn){
   uint32_t saved_off;
   /* TODO: This does not handle
        target in esp
@@ -386,7 +376,7 @@ void gen_indirect(mv_code_t *code, cs_insn *insn){
   
   /* Second half */ 
   gen_padding(code, insn, 12);
-  if( insn->id == X86_INS_CALL ){
+  if( insn->id == SS_INS_CALL ){
     memcpy( code->code+code->offset, indirect_template_mask_call, 12);
   }else{
     memcpy( code->code+code->offset, indirect_template_mask_jmp, 12);
@@ -398,14 +388,14 @@ void gen_indirect(mv_code_t *code, cs_insn *insn){
   
   /* For a jump, we know that code can't fall through, so this offset is safe,
      i.e., we can assume it is plausibly real code */
-  if( insn->id == X86_INS_JMP ){
+  if( insn->id == SS_INS_JMP ){
     code->last_safe_offset = code->offset;
     code->last_safe_reloc = code->reloc_count;
   }
   
 }
 
-void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
+void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
   /* If we have selected a chunk size that is not zero AND the instruction is not already aligned,
      pad to chunk size whenever we encounter either:
@@ -423,7 +413,7 @@ void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
      instructions are padded to right before the end of a chunk.
      TODO: Cover all variations of call instructions
   */
-  if( code->chunk_size != 0 && (insn->id == X86_INS_CALL) &&
+  if( code->chunk_size != 0 && (insn->id == SS_INS_CALL) &&
       ( (code->offset + new_size) % code->chunk_size != 0) ){
     memset(code->code+code->offset, NOP,
       code->chunk_size - ((code->offset + new_size) % code->chunk_size));
@@ -431,7 +421,7 @@ void gen_padding(mv_code_t *code, cs_insn *insn, uint16_t new_size){
   }
 }
 
-void check_target(mv_code_t *code, cs_insn *insn){
+void check_target(mv_code_t *code, ss_insn *insn){
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
   /*
     Insert ONE extra nop if instruction is a target, so that all targets
