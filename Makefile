@@ -2,7 +2,7 @@ MUSL_PATH = ~/git/musl/lib
 
 all: mapper.o
 	$(AR) -rsc libminiverse.a mapper.o
-	$(CC) -m32 -g -fPIE -shared -static -pie -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis32.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a handlers.c $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -Wl,-wrap=printf -o libminiversebin
+	$(CC) -m32 -Wall -Wextra -g -fPIE -shared -static -pie -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis32.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a handlers.c $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -Wl,-wrap=printf -o libminiversebin
 
 test: mapper.o
 	$(AR) -rsc libminiverse.a mapper.o
@@ -20,7 +20,7 @@ install: all
 	cp libminiverse.a /usr/local/lib/libminiverse.a
 
 %.o: %.c
-	$(CC) -m32 -fPIE -shared -g -c $< -o $@
+	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -c $< -o $@
 
 clean:
 	rm -f driver *.gch *.a *.o

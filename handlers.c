@@ -31,10 +31,12 @@ int __real_mprotect(void *addr, size_t len, int prot);
    Perhaps we could use L_PRELOAD at runtime, or our static rewriter.  Regardless,
    the simplest hook for now shouldn't need these.  */
 void mmap_hook(void *addr){
+  (void)(addr);
   //mmap_real = mmap;
 }
 
 void mprotect_hook(void *addr){
+  (void)(addr);
   //mprotect_real = mprotect;
 }
 
@@ -52,6 +54,7 @@ void register_handler(){
 /* Create wrapper for printf that performs a no-op to try
    and test whether removing calls to printf solves our problem */
 int __wrap_printf(const char * format, ...){
+  (void)(format);
   return 0; // Perform no-op instead of printing something
 }
 
@@ -98,6 +101,8 @@ uintptr_t new_address = 0x0000000;// address of start of generated code; let ker
    remembered region from previous calls to mprotect or mmap, as we maybe
    should eventually do. */
 void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
+  (void)(sig);
+  (void)(info);
   //info->si_addr = (void*)( (uintptr_t)(&mmap_hook) + 5 ); /* Try setting return target to a ret */
   ucontext_t *con = (ucontext_t*)ucontext;
   /* Machine-dependent definition of processor state: set new value for eip */

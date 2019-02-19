@@ -54,9 +54,9 @@ uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x64
 bool is_pic(mv_code_t *code, uintptr_t address);
 
 void gen_insn(mv_code_t *code, ss_insn *insn);
-void inline gen_ret(mv_code_t *code, ss_insn *insn);
-void inline gen_cond(mv_code_t *code, ss_insn *insn);
-void inline gen_uncond(mv_code_t *code, ss_insn *insn);
+inline void gen_ret(mv_code_t *code, ss_insn *insn);
+inline void gen_cond(mv_code_t *code, ss_insn *insn);
+inline void gen_uncond(mv_code_t *code, ss_insn *insn);
 void gen_indirect(mv_code_t *code, ss_insn *insn);
 void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size);
 void check_target(mv_code_t *code, ss_insn *insn);
@@ -93,7 +93,7 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   
   ss_open(SS_MODE_32, &handle, bytes, bytes_size, (uint64_t)address);
 
-  while( result = ss_disassemble(&handle, &insn) ){
+  while( (result = ss_disassemble(&handle, &insn)) ){
     if( result == SS_SUCCESS ){
       printf("0x%llx: %s\t(%x)\n", insn.address, insn.insn_str, code.offset);
       code.mapping[insn.address-code.base] = code.offset; // Set offset of instruction in mapping
@@ -130,10 +130,15 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   for( r = 0; r < code.reloc_count; r++ ){
     rel = *(code.relocs+r);
     if( rel.type == RELOC_OFF ){
-      /* If target is in mapping, update entry.  Otherwise, we probably want to somehow check
-         if this target is a valid target in a separate module.
+      /* If target is in mapping, update entry.  Otherwise, we probably want to
+         somehow check if this target is a valid target in a separate module.
+         We only need to check whether (rel.target - code.base) is less than
+         the original size and not check whether it is >= 0 because both
+         numbers are unsigned and therefore would instead just wrap around to
+         a very large positive number if the target address is before the base
+         address.
          TODO: Handle targets outside mapping! */
-      if( rel.target - code.base >= 0 && rel.target - code.base < code.orig_size ){
+      if( rel.target - code.base < code.orig_size ){
         printf("%u\t0x%x (%u)\t0x%x\t0x%x\t\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
         *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
       }else{
@@ -220,7 +225,7 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
   }
 }
 
-void inline gen_ret(mv_code_t *code, ss_insn *insn){
+inline void gen_ret(mv_code_t *code, ss_insn *insn){
   /* TODO: Handle far returns */
   /* TODO: Handle returns that pop extra bytes from stack */
   if( *(insn->bytes) == RET_NEAR ){
@@ -238,7 +243,7 @@ void inline gen_ret(mv_code_t *code, ss_insn *insn){
   }
 }
 
-void inline gen_cond(mv_code_t *code, ss_insn *insn){
+inline void gen_cond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
@@ -269,7 +274,7 @@ void inline gen_cond(mv_code_t *code, ss_insn *insn){
   }
 }
 
-void inline gen_uncond(mv_code_t *code, ss_insn *insn){
+inline void gen_uncond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
@@ -333,7 +338,6 @@ void inline gen_uncond(mv_code_t *code, ss_insn *insn){
 }
 
 void gen_indirect(mv_code_t *code, ss_insn *insn){
-  uint32_t saved_off;
   /* TODO: This does not handle
        target in esp
        overlapping pointers
