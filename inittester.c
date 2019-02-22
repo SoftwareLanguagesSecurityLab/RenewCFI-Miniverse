@@ -66,6 +66,23 @@
 //#define BSS_SIZE 0x1b04
 //#define BSS_SIZE 0x1af0
 
+/* Iterate through relocation entries, assuming they only consist of
+   type R_386_RELATIVE as we attempt to compile the binary ahead of
+   time to not contain any other types of relocations. */
+void patch_relocs(Elf32_Rel* reloc, size_t count, void* address){
+  size_t i;
+  for( i = 0; i < count; i++){
+    if( reloc->r_info == R_386_RELATIVE ){
+      /* Add base address to value at address of relocation entry */
+      *(uint32_t*)((uintptr_t)address + reloc->r_offset) += (uintptr_t)address;
+    }else{
+      puts("Only R_386_RELATIVE relocations supported.  Abort.");
+      exit(0);
+    }
+    reloc++;
+  }
+}
+
 /* Load binary at address specified.  Assume address is not NULL and that
    we can guarantee that there is enough space at the specified address to
    map the binary into memory without colliding with another mapped region */
@@ -108,6 +125,11 @@ void load_binary(int fd, void* address){
        from sections following .bss */
     if( shdr->sh_type == SHT_NOBITS ){
       memset( address+shdr->sh_addr, 0, shdr->sh_size);
+    }else if( shdr->sh_type == SHT_REL ){
+      /* Retrieve section with relocation entries.  For x86, it is of type
+         SHT_REL, whereas for x86-64 it is SHT_RELA */
+      patch_relocs( (Elf32_Rel*)(address+shdr->sh_offset),
+        (size_t)((shdr->sh_size)/sizeof(Elf32_Rel)), address );
     }
     shdr++;
   }
