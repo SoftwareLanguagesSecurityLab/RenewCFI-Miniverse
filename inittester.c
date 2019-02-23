@@ -86,13 +86,14 @@ void patch_relocs(Elf32_Rel* reloc, size_t count, void* address){
 /* Load binary at address specified.  Assume address is not NULL and that
    we can guarantee that there is enough space at the specified address to
    map the binary into memory without colliding with another mapped region */
-void load_binary(int fd, void* address){
+size_t load_binary(int fd, void* address){
   Elf32_Ehdr* ehdr;
   Elf32_Phdr* phdr;
   Elf32_Shdr* shdr;
   uintptr_t seg_addr,align_offset;
   //void* ehdr_addr;
   void* shdr_addr;
+  size_t mapped_size = 0;
   int i;
   /* Map elf header into memory */
   ehdr = (Elf32_Ehdr*)mmap(0, 0x1000, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -109,6 +110,12 @@ void load_binary(int fd, void* address){
       mmap((void*)(seg_addr), phdr->p_memsz+align_offset,
         (phdr->p_flags & PF_X) ? PROT_EXEC : PROT_READ|PROT_WRITE,
         MAP_PRIVATE, fd, phdr->p_offset-align_offset );
+      /* Find highest mapped address to find overall size of mapped region */
+      if( (seg_addr + phdr->p_memsz + align_offset) -
+          (uintptr_t)address > mapped_size ){
+        mapped_size = (seg_addr + phdr->p_memsz + align_offset) -
+          (uintptr_t)address;
+      }
     }
     phdr++;
   }
@@ -135,6 +142,8 @@ void load_binary(int fd, void* address){
   }
   munmap(shdr_addr, 0x1000);
   munmap(ehdr, 0x1000);
+  printf("mapped region size: 0x%x\n", mapped_size); 
+  return mapped_size;
 }
 
 /* Map memory for miniverse library and set up handlers. 

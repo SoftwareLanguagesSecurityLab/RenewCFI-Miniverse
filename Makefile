@@ -3,6 +3,7 @@ MUSL_PATH = ~/git/musl/lib
 all: mapper.o
 	$(AR) -rsc libminiverse.a mapper.o
 	$(CC) -m32 -Wall -Wextra -g -fPIE -shared -static -pie -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a handlers.c $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -o libminiversebin
+	$(CC) -m32 -Wall -Wextra -g bpatch.c inittester.c -o bpatch
 
 test: mapper.o
 	$(AR) -rsc libminiverse.a mapper.o
