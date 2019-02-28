@@ -8,12 +8,22 @@
 
 #include "inittester.h"
 
+#define LIB_ADDRESS 0xa000000
+
+void entry_restorer(){
+  /* Load in assembled entry point code */
+  /* Patch parameters to mmap, addresses of miniverse library & entry point */
+  /* Drop entry point code on top of original entry point */
+}
+
 void patch_binary(void* address, size_t size, void* libaddress, size_t libsize){
   (void)address;
   (void)size;
   (void)libaddress;
   (void)libsize;
   /* Get program phdrs */
+  /* TODO: If phdrs include PT_INTERP we need to make sure that isn't altered */
+  /* What if it's possible to set a new PHDR location with PT_PHDR */
   /* Copy chunk of code segment as large as current phdrs + 2 extra:
        -One for the copied code itself
        -One for libminiversebin and code segment restoration function */
@@ -29,7 +39,7 @@ int main(int argc, char** argv){
   if( argc == 2 ){
     fd = open("libminiversebin", O_RDONLY);
     /* Load and patch binary in memory, which we will later add to binary */
-    mapped_size = load_binary(fd, (void*)0xa000000);
+    mapped_size = load_binary(fd, (void*)LIB_ADDRESS);
     close(fd);
 
     if( stat(argv[1], &st) != 0 ){
@@ -39,7 +49,7 @@ int main(int argc, char** argv){
     fd = open(argv[1], O_RDONLY);
     bin_addr = mmap(0, st.st_size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
     close(fd);
-    patch_binary(bin_addr,st.st_size, (void*)0xa000000, mapped_size);
+    patch_binary(bin_addr,st.st_size, (void*)LIB_ADDRESS, mapped_size);
     /*fd = open(argv[1], O_WRONLY);
     if( write(fd, bin_addr, st.st_size) != st.st_size ){
       puts("WARNING: Write did not successfully write all bytes to file.\n");
