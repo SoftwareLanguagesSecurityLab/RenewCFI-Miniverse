@@ -18,7 +18,7 @@ pic:
 	add edi, mmap_arg_struct
 	mov edi, [edi]
 	mov ebx, [esp]
-	add ebx, [mmap_arg_struct+4]
+	add ebx, [mmap_arg_struct+4]	; miniverse_dest_addr
 	mov ebx, [ebx]
 bytes_copy:
 	mov dword edx, [esi]
@@ -27,7 +27,9 @@ bytes_copy:
 	add edi, 4
 	sub ebx, 4
 	jnz bytes_copy
-	jmp _entry
+	push [original_entry]
+	push [esp+4]
+	jmp [miniverse_entry]
 mmap_arg_struct:
 	dd 0xf4f4f4f4		; addr
 	dd 0x00000000		; len
@@ -35,5 +37,11 @@ mmap_arg_struct:
 	dd 0x00000000		; flags
 	dd 0x00000000		; fd
 	dd 0x00000000		; offset
-miniverse_addr:
-	dd 0x00000000		; addr of miniverse library (may be non-exec)
+miniverse_source_addr:
+	dd 0x00000000		; loaded address of miniverse (may be non-exec)
+miniverse_dest_addr:
+	dd 0x00000000		; target address for miniverse to be loaded to
+miniverse_entry:
+	dd 0x00000000		; addr of entry point to miniverse (in target)
+original_entry:
+	dd 0x00000000		; addr of backed-up original entry point
