@@ -5,6 +5,9 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+#include <errno.h>
 
 #include "inittester.h"
 
@@ -35,7 +38,8 @@ void patch_entry(void* entry_address, void* lib_address, size_t lib_size,
   close(fd);
   
   /* Back up page starting with entry point */
-  entry_copy = mmap(0, 0x1000, PROT_READ|PROT_WRITE, MAP_PRIVATE, -1, 0);
+  entry_copy = mmap(0, 0x1000, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+printf( "error result: %d, %s\n", errno, strerror( errno ));  
   memcpy(entry_copy, entry_address, 0x1000);
 
   /* Copy over original entry point with our new entry point */
@@ -52,7 +56,7 @@ void patch_entry(void* entry_address, void* lib_address, size_t lib_size,
     exit(0);
   }
   /* Populate arguments for mapping in library */
-  mmap_arg->addr = lib_address;
+  mmap_arg->addr = (unsigned long)lib_address;
   mmap_arg->len = 0x1000;
   mmap_arg->prot = PROT_READ | PROT_WRITE;
   mmap_arg->flags = MAP_PRIVATE;
@@ -66,7 +70,7 @@ void patch_entry(void* entry_address, void* lib_address, size_t lib_size,
 }
 
 void patch_binary(void* address, size_t size,
-    void* lib_address, size_t lib_size){
+    void* lib_address, size_t lib_size, void* lib_entry){
   Elf32_Ehdr* ehdr;
   Elf32_Phdr* phdr; 
   Elf32_Addr entry;
@@ -86,7 +90,8 @@ void patch_binary(void* address, size_t size,
     exit(0);
   }
   entry_address = address+(entry-phdr->p_vaddr);
-  patch_entry(entry_address, lib_address,   
+  /* For now, don't bother with figuring out where the backup is */
+  patch_entry(entry_address, lib_address, lib_size, lib_entry, (void*)0);
   /* TODO: If phdrs include PT_INTERP we need to make sure that isn't altered */
   /* What if it's possible to set a new PHDR location with PT_PHDR */
   /* Copy chunk of code segment as large as current phdrs + 2 extra:
@@ -102,6 +107,8 @@ int main(int argc, char** argv){
   size_t mapped_bin_size;
   struct stat st;
   void* bin_addr;
+  char* outfname;
+  int outfname_size;
   if( argc == 2 ){
     fd = open("libminiversebin", O_RDONLY);
     /* Load and patch library in memory, which we will later add to binary */
@@ -114,6 +121,11 @@ int main(int argc, char** argv){
       printf("Loading %s failed.  Stat failure.\n", argv[1]);
       exit(0);
     }
+
+    /* Dump library's binary image as it is laid out in memory to a file. */
+    fd = open("libminiverseflat", O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
+    write(fd, (void*)LIB_ADDRESS, mapped_lib_size);
+    close(fd);
 
     fd = open(argv[1], O_RDONLY);    
     mapped_bin_size = st.st_size + mapped_lib_size;
@@ -128,12 +140,20 @@ int main(int argc, char** argv){
     close(fd);
     /* Pass the actual binary size for now; if it's needed, we will expand the
        binary to hold that extra data. */
-    patch_binary(bin_addr,st.st_size, (void*)LIB_ADDRESS, mapped_size);
-    /*fd = open(argv[1], O_WRONLY);
+    patch_binary(bin_addr,st.st_size, (void*)LIB_ADDRESS, mapped_lib_size, (void*)0);
+    outfname_size = strlen(argv[1]);
+    outfname = malloc(outfname_size + 3);
+    strcpy(outfname, argv[1]);
+    outfname[outfname_size] = '-';
+    outfname[outfname_size+1] = 'r';
+    outfname[outfname_size+2] = '\0';
+    fd = open(outfname, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IXGRP|S_IROTH|S_IXOTH);
+    /* TODO: We are writing the exact size of the original binary.  We may
+       continue to do so if we do not try expanding the last segment */
     if( write(fd, bin_addr, st.st_size) != st.st_size ){
       puts("WARNING: Write did not successfully write all bytes to file.\n");
     }
-    close(fd);*/
+    close(fd);
   }else{
     printf("Usage: %s <file>\n", argv[0]);
   }
