@@ -7,10 +7,11 @@ _entry:
 	call pic
 pic:
 	sub dword [esp], 5		; subtract offset of call instruction
+	pop edx				; save address of entry point in edx
 	call open_miniverse		; returns fd in eax
 	; mmap in contents of miniverse file
 	mov edi, eax			; save fd so we can close the file
-	mov ebx, [esp]			; load code start address
+	mov ebx, edx			; load code start address
 	add ebx, mmap_arg_struct	; load address of mmap arg
 	mov esi, 6
 mmap_arg_loop:
@@ -24,17 +25,15 @@ mmap_arg_loop:
 	int 0x80
 	add esp, 24
 	call close_miniverse
-	mov ebx, [esp]
-        add esp,4
-	mov esi, [ebx+miniverse_filename]
-	push dword esi
-        mov esi, [ebx+entry_filename]
-	push dword esi
-        mov esi, [ebx+miniverse_entry]
-	jmp esi
+	lea esi, [edx+entry_filename]
+	push dword esi			; push address of entry filename
+	push dword edx			; push entry point address
+	push dword edx			; push entry point address (for ret)
+        mov esi, [edx+miniverse_entry]	; retrieve address of miniverse entry
+	jmp esi				; jump to library entry
 open_miniverse:
 	mov eax, 0x5			; open
-	mov ebx, [esp+4]		; load base address
+	mov ebx, edx			; load base address
 	add ebx, miniverse_filename	; file name
 	mov ecx, O_RDONLY		; open as readonly ; edx (mode) ignored
 	int 0x80
@@ -44,16 +43,16 @@ close_miniverse:
 	mov ebx, edi			; fd
 	int 0x80
 	ret
-	dd 0xf4f4f4f4		; addr
-	dd 0x00000000		; len
-	dd 0x00000000		; prot
-	dd 0x00000000		; flags
+	dd 0xf4f4f4f4			; addr
+	dd 0x00000000			; len
+	dd 0x00000000			; prot
+	dd 0x00000000			; flags
 mmap_arg_fd:
-	dd 0x00000000		; fd
-mmap_arg_struct:		; put mmap_arg_struct label at last element
-	dd 0x00000000		; offset
+	dd 0x00000000			; fd
+mmap_arg_struct:			; label mmap_arg_struct at last element
+	dd 0x00000000			; offset
 miniverse_entry:
-	dd 0x00000000		; addr of entry point to miniverse (in target)
+	dd 0x00000000			; addr of miniverse entry (in mmapped)
 miniverse_filename:
 	db 'libminiverseflat', 0	; filename of miniverse library
 entry_filename:

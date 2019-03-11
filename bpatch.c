@@ -58,7 +58,7 @@ printf( "error result: %d, %s\n", errno, strerror( errno ));
   /* Populate arguments for mapping in library */
   mmap_arg->addr = (unsigned long)lib_address;
   mmap_arg->len = lib_size;
-  mmap_arg->prot = PROT_READ | PROT_EXEC;
+  mmap_arg->prot = PROT_READ | PROT_EXEC | PROT_WRITE;
   mmap_arg->flags = MAP_PRIVATE;
   mmap_arg->fd = -1;
   mmap_arg->offset = 0;

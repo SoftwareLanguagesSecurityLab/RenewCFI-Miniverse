@@ -3,7 +3,7 @@
 
 /* TODO: I may want to name this function miniverse_init */
 void miniverse_entry(uintptr_t entry_address, const char* entry_fname){
-  printf("Hello: %d, %s\n", entry_address, entry_fname);
+  printf("Hello: 0x%x, %s\n", entry_address, entry_fname);
 }
 
 bool is_target(uintptr_t address, uint8_t *bytes){
