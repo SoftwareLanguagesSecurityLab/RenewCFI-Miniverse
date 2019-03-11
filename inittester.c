@@ -86,7 +86,7 @@ void patch_relocs(Elf32_Rel* reloc, size_t count, void* address){
 /* Load binary at address specified.  Assume address is not NULL and that
    we can guarantee that there is enough space at the specified address to
    map the binary into memory without colliding with another mapped region */
-size_t load_binary(int fd, void* address){
+size_t load_library(int fd, void* address, void** lib_entry){
   Elf32_Ehdr* ehdr;
   Elf32_Phdr* phdr;
   Elf32_Shdr* shdr;
@@ -95,6 +95,7 @@ size_t load_binary(int fd, void* address){
   void* shdr_addr;
   size_t mapped_size = 0;
   int i;
+  *lib_entry = NULL;
   /* Map elf header into memory */
   ehdr = (Elf32_Ehdr*)mmap(0, 0x1000, PROT_READ, MAP_PRIVATE, fd, 0);
   /* Read phdr offset from ELF header */
@@ -137,6 +138,13 @@ size_t load_binary(int fd, void* address){
          SHT_REL, whereas for x86-64 it is SHT_RELA */
       patch_relocs( (Elf32_Rel*)(address+shdr->sh_offset),
         (size_t)((shdr->sh_size)/sizeof(Elf32_Rel)), address );
+    }else if( *lib_entry == NULL && shdr->sh_type == SHT_PROGBITS &&
+      shdr->sh_flags & SHF_EXECINSTR ){
+      /* If this is the first section we have found that is PROGBITS and
+         executable, set this as the entry point: we will designate the first
+         function in the library as the entry point, so we can point to the
+         start of the text section */
+      *lib_entry = address + shdr->sh_addr;
     }
     shdr++;
   }
@@ -150,12 +158,13 @@ size_t load_binary(int fd, void* address){
    */
 void* miniverse_init(){
   struct stat st;
+  void* lib_entry;
   if( stat("libminiversebin", &st) != 0 ){
     puts("Loading Miniverse library failed.  Stat failure.\n");
     exit(0);
   }
   int fd = open("libminiversebin", O_RDONLY);
-  load_binary(fd, (void*)0xa000000);
+  load_library(fd, (void*)0xa000000, &lib_entry);
   //mmap((void*)0xa000000, st.st_size, PROT_EXEC, MAP_PRIVATE, fd, 0);
   close(fd);
   /* Set data section of library to be writable and not executable */

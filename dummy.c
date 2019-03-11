@@ -2,8 +2,8 @@
 #include "handlers.h"
 
 /* TODO: I may want to name this function miniverse_init */
-void miniverse_entry(uintptr_t entry_address, uintptr_t orig_entry){
-  printf("Hello: %d, %d\n", entry_address, orig_entry);
+void miniverse_entry(uintptr_t entry_address, const char* entry_fname){
+  printf("Hello: %d, %s\n", entry_address, entry_fname);
 }
 
 bool is_target(uintptr_t address, uint8_t *bytes){

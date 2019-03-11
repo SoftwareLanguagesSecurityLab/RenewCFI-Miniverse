@@ -27,7 +27,7 @@ struct mmap_arg_struct {
 /* Patch parameters to mmap, addresses of miniverse library & entry point */
 /* Drop entry point code on top of original entry point */
 void patch_entry(void* entry_address, void* lib_address, size_t lib_size,
-    void* lib_entry, void* entry_backup){
+    void* lib_entry/*, void* entry_backup*/){
   int fd;
   void *new_entry, *entry_copy;
   size_t offset;
@@ -57,8 +57,8 @@ printf( "error result: %d, %s\n", errno, strerror( errno ));
   }
   /* Populate arguments for mapping in library */
   mmap_arg->addr = (unsigned long)lib_address;
-  mmap_arg->len = 0x1000;
-  mmap_arg->prot = PROT_READ | PROT_WRITE;
+  mmap_arg->len = lib_size;
+  mmap_arg->prot = PROT_READ | PROT_EXEC;
   mmap_arg->flags = MAP_PRIVATE;
   mmap_arg->fd = -1;
   mmap_arg->offset = 0;
@@ -66,10 +66,10 @@ printf( "error result: %d, %s\n", errno, strerror( errno ));
   /* Set the locations of library entry and backed up entry point */
   patch_addr = (uintptr_t*)(mmap_arg+1);
   *patch_addr++ = (uintptr_t)lib_entry;
-  *patch_addr = (uintptr_t)entry_backup;
+  //*patch_addr = (uintptr_t)entry_backup;
 }
 
-void patch_binary(void* address, size_t size,
+void patch_binary(void* address/*, size_t size*/,
     void* lib_address, size_t lib_size, void* lib_entry){
   Elf32_Ehdr* ehdr;
   Elf32_Phdr* phdr; 
@@ -91,7 +91,7 @@ void patch_binary(void* address, size_t size,
   }
   entry_address = address+(entry-phdr->p_vaddr);
   /* For now, don't bother with figuring out where the backup is */
-  patch_entry(entry_address, lib_address, lib_size, lib_entry, (void*)0);
+  patch_entry(entry_address, lib_address, lib_size, lib_entry/*, (void*)0*/);
   /* TODO: If phdrs include PT_INTERP we need to make sure that isn't altered */
   /* What if it's possible to set a new PHDR location with PT_PHDR */
   /* Copy chunk of code segment as large as current phdrs + 2 extra:
@@ -109,13 +109,14 @@ int main(int argc, char** argv){
   void* bin_addr;
   char* outfname;
   int outfname_size;
+  void* lib_entry;
   if( argc == 2 ){
     fd = open("libminiversebin", O_RDONLY);
     /* Load and patch library in memory, which we will later add to binary */
     /* TODO: This should be called load_library, my code is getting messy
        because I am having trouble keeping track of everything I need to
        patch/load */
-    mapped_lib_size = load_binary(fd, (void*)LIB_ADDRESS);
+    mapped_lib_size = load_library(fd, (void*)LIB_ADDRESS, &lib_entry);
     close(fd);
     if( stat(argv[1], &st) != 0 ){
       printf("Loading %s failed.  Stat failure.\n", argv[1]);
@@ -140,7 +141,8 @@ int main(int argc, char** argv){
     close(fd);
     /* Pass the actual binary size for now; if it's needed, we will expand the
        binary to hold that extra data. */
-    patch_binary(bin_addr,st.st_size, (void*)LIB_ADDRESS, mapped_lib_size, (void*)0);
+    patch_binary(bin_addr/*,st.st_size*/, (void*)LIB_ADDRESS,
+      mapped_lib_size, lib_entry);
     outfname_size = strlen(argv[1]);
     outfname = malloc(outfname_size + 3);
     strcpy(outfname, argv[1]);
