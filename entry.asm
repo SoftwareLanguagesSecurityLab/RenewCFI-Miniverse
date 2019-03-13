@@ -27,11 +27,10 @@ mmap_arg_loop:
 	add esp, 24
 	call close_miniverse
 	lea esi, [edi+entry_filename]
-	push dword esi			; push address of entry filename
 	push dword edi			; push entry point address
-	push dword edi			; push entry point address (for ret)
+	push dword esi			; push address of entry filename
         mov esi, [edi+miniverse_entry]	; retrieve address of miniverse entry
-	jmp esi				; jump to library entry
+	call esi			; call library entry
 open_miniverse:
 	mov eax, 0x5			; open
 	mov ebx, edi			; load base address
