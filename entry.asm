@@ -7,11 +7,12 @@ _entry:
 	call pic
 pic:
 	sub dword [esp], 5		; subtract offset of call instruction
-	pop edx				; save address of entry point in edx
+	pop edi				; save address of entry point in edi
+	push edx			; save original value of edx
 	call open_miniverse		; returns fd in eax
 	; mmap in contents of miniverse file
-	mov edi, eax			; save fd so we can close the file
-	mov ebx, edx			; load code start address
+	mov edx, eax			; save fd so we can close the file
+	mov ebx, edi			; load code start address
 	add ebx, mmap_arg_struct	; load address of mmap arg
 	mov esi, 6
 mmap_arg_loop:
@@ -20,27 +21,27 @@ mmap_arg_loop:
 	dec esi
 	jnz mmap_arg_loop
 	mov ebx, esp
-	mov [ebx+16], eax		; load fd to right field of struct
+	mov [ebx+16], edx		; load fd to right field of struct
 	mov eax, 0x5a			; old_mmap
 	int 0x80
 	add esp, 24
 	call close_miniverse
-	lea esi, [edx+entry_filename]
+	lea esi, [edi+entry_filename]
 	push dword esi			; push address of entry filename
-	push dword edx			; push entry point address
-	push dword edx			; push entry point address (for ret)
-        mov esi, [edx+miniverse_entry]	; retrieve address of miniverse entry
+	push dword edi			; push entry point address
+	push dword edi			; push entry point address (for ret)
+        mov esi, [edi+miniverse_entry]	; retrieve address of miniverse entry
 	jmp esi				; jump to library entry
 open_miniverse:
 	mov eax, 0x5			; open
-	mov ebx, edx			; load base address
+	mov ebx, edi			; load base address
 	add ebx, miniverse_filename	; file name
 	mov ecx, O_RDONLY		; open as readonly ; edx (mode) ignored
 	int 0x80
         ret
 close_miniverse:
 	mov eax, 0x6			; close
-	mov ebx, edi			; fd
+	mov ebx, edx			; fd
 	int 0x80
 	ret
 	dd 0xf4f4f4f4			; addr

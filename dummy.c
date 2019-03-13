@@ -1,9 +1,28 @@
 #include "miniverse.h"
 #include "handlers.h"
+#include <sys/mman.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+int __real_mprotect(void *addr, size_t len, int prot);
 
 /* TODO: I may want to name this function miniverse_init */
 void miniverse_entry(uintptr_t entry_address, const char* entry_fname){
-  printf("Hello: 0x%x, %s\n", entry_address, entry_fname);
+  int fd;
+  //printf("Hello: 0x%x, %s\n", entry_address, entry_fname);
+  /* Restore original entry point */
+  fd = open(entry_fname, O_RDONLY);
+  __real_mprotect((void*)(entry_address&0xfffff000), 0x2000, PROT_READ|PROT_WRITE);
+  read(fd, (void*)entry_address, 0x1000);
+  __real_mprotect((void*)(entry_address&0xfffff000), 0x2000, PROT_READ|PROT_EXEC); 
+  asm volatile(
+  	".intel_syntax noprefix\n"
+	"mov edx, [%0+4]\n"
+	".att_syntax\n"
+	: 
+	: "r" (&entry_fname)
+	:
+  );
 }
 
 bool is_target(uintptr_t address, uint8_t *bytes){
