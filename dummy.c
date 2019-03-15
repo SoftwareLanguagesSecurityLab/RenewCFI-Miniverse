@@ -63,6 +63,6 @@ int main(){
   register_handler();
 
   gen_code(orig_code, code_size, address,
-    new_address, &new_size, 16, &is_target);
+    &new_address, &new_size, 16, &is_target);
   return 0;
 }

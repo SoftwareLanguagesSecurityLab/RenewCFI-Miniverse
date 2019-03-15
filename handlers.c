@@ -116,27 +116,29 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   
     uint8_t *orig_code = (uint8_t *)(target - (target % 0x1000));
     size_t code_size = 0x1000;
-    size_t new_size = 0;
+    pa_entry_t new_mem;
 
     /* Set original code to be readable and writable, regardless of what it was set to before,
        so we may disassemble it and write to it.
        TODO: Set as read-only afterwards to detect changes */
-    __real_mprotect((void*)orig_code, 4096, PROT_READ|PROT_WRITE);
+    __real_mprotect((void*)orig_code, 0x1000, PROT_READ|PROT_WRITE);
   
-    new_address = (uintptr_t)__real_mmap((void*)new_address, 4096*NEW_ALLOC_SAFETY, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    page_alloc(&new_mem, 0x1000/**NEW_ALLOC_SAFETY*/);
   
-    mapping = gen_code(orig_code, code_size, address, new_address,
-        &new_size, 16, &is_target);
+    mapping = gen_code(orig_code, code_size, address,
+        (uintptr_t*)&new_mem.address, &new_mem.size, 16, &is_target);
+
+    new_address = (uintptr_t)new_mem.address;
   
     /* Don't free the mapping because we will need it for subsequent calls!  Do we have to keep
        ALL mappings for all rewritten code regions always allocated so we can look up the target in
        the handler? */
     //free(mapping);
   
-    size_t pages = (new_size/4096)+1;
+    size_t pages = (new_mem.size/0x1000)+1;
   
     /* Call the real, un-wrapped mprotect to actually set these pages as executable */
-    __real_mprotect((void*)new_address, 4096*pages, PROT_EXEC);
+    __real_mprotect((void*)new_address, 0x1000*pages, PROT_EXEC);
 
     already_rewritten = true;
   }

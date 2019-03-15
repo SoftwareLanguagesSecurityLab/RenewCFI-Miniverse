@@ -31,6 +31,7 @@ typedef struct mv_reloc_t{
 
 typedef struct mv_code_t{
   uint8_t *code;
+  pa_entry_t code_mem;
   uint32_t *mapping;
   mv_reloc_t *relocs;
   size_t reloc_count;
@@ -63,7 +64,7 @@ void check_target(mv_code_t *code, ss_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target);
 
 uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
-    uintptr_t new_address, size_t *new_size, uint8_t chunk_size,
+    uintptr_t *new_address, size_t *new_size, uint8_t chunk_size,
     bool (*is_target)(uintptr_t address, uint8_t *bytes)){
   ss_handle handle;
   ss_insn insn;
@@ -80,8 +81,10 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   code.base = address;
   page_alloc( &mapping_mem, sizeof(uint32_t) * bytes_size );
   code.mapping = mapping_mem.address;
-  code.code = (uint8_t*) new_address;// Will allocate more pages if needed
-  code.code_size = 4096;// Assume we start with only one page allocated
+  code.code = (uint8_t*) *new_address;// Will allocate more pages if needed
+  code.code_mem.address = (void*)(*new_address);
+  code.code_mem.size = *new_size;
+  code.code_size = *new_size;// Start with however much the caller allocated
   code.chunk_size = chunk_size;
   code.orig_size = bytes_size; //Capstone decrements the original size variable, so we must save it
   page_alloc( &reloc_mem, sizeof(mv_reloc_t) * bytes_size );
@@ -149,7 +152,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
       /* Unlike for RELOC_OFF type, we write directly to the target, placing the new base address
          plus the offset directly at that address in the original text section */  
       //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
-      *(uint32_t*)(rel.target) = new_address + rel.offset;
+      *(uint32_t*)(rel.target) = (uintptr_t)code.code + rel.offset;
     }
   }
 
@@ -159,10 +162,11 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   printf("Original code size: %d\n", code.orig_size);
   printf("Generated code size: %d\n", code.offset);
   printf("Total bytes trimmed: %d\n", trimmed_bytes);
-  printf("New code address: 0x%lx\n", code.code);
+  printf("New code address: 0x%x\n", (uintptr_t)code.code);
   //free(code.mapping);
   page_free(&reloc_mem);
   *new_size = code.code_size;
+  *new_address = (uintptr_t)code.code;
   return code.mapping;// TODO: return value that allows caller to free mapping
 }
 
@@ -171,10 +175,16 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
   /* Expand allocated memory for code to fit additional instructions and padding */
   if( code->offset + (3*code->chunk_size) >= code->code_size ){
     /* Allocate one new page and increase code size to reflect the new size */
-    printf("Mapping another page: %d >= %d\n", code->offset + (3*code->chunk_size), code->code_size);
-    mmap((void*)code->code+code->code_size,
-      4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0); 
-    code->code_size += 4096;
+    printf("Increasing new code size: %d >= %d (0x%x)\n",
+        code->offset + (3*code->chunk_size),
+        code->code_size, (uintptr_t)code->code_mem.address);
+    if( page_realloc(&code->code_mem, code->code_size+0x1000) ){
+      code->code = code->code_mem.address;
+      code->code_size = code->code_mem.size;
+      printf("Newly allocated: 0x%x\n", (uintptr_t)code->code_mem.address);
+    }else{
+      puts("ERROR: Failed to allocate memory for new code");
+    }
   }
   /* Rewrite instruction, using the instruction id to determine what kind
      of instruction it is */
