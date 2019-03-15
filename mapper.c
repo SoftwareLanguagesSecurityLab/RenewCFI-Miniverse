@@ -95,12 +95,12 @@ uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
 
   while( (result = ss_disassemble(&handle, &insn)) ){
     if( result == SS_SUCCESS ){
-      printf("0x%llx: %s\t(%x)\n", insn.address, insn.insn_str, code.offset);
+      //printf("0x%llx: %s\t(%x)\n", insn.address, insn.insn_str, code.offset);
       code.mapping[insn.address-code.base] = code.offset; // Set offset of instruction in mapping
       gen_insn(&code, &insn);
     }else if( insn.id == SS_INS_JMP ){ // Special jmp instruction
       /* TODO: Patch special instruction */ 
-      printf("0x%llx: %s\t(SPECIAL)\n", insn.address, insn.insn_str);
+      //printf("0x%llx: %s\t(SPECIAL)\n", insn.address, insn.insn_str);
       gen_insn(&code, &insn);
     }else{ // Instruction is SS_INS_HLT; special hlt instruction
       /* Roll back to last unconditional control flow instruction, because all code following it
@@ -125,7 +125,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   /* Make original text section writable before patching relocs, since we will need to modify it */
   mprotect((void*)address, code.orig_size, PROT_READ|PROT_WRITE);
  
-  printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
+  //printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
   // Loop through relocations and patch target destinations
   for( r = 0; r < code.reloc_count; r++ ){
     rel = *(code.relocs+r);
@@ -139,16 +139,16 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
          address.
          TODO: Handle targets outside mapping! */
       if( rel.target - code.base < code.orig_size ){
-        printf("%u\t0x%x (%u)\t0x%x\t0x%x\t\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
+        //printf("%u\t0x%x (%u)\t0x%x\t0x%x\t\t%d\n", rel.type, rel.offset, rel.offset, rel.target, code.mapping[rel.target-code.base], code.mapping[rel.target-code.base] - (rel.offset+4));
         *(uint32_t*)(code.code + rel.offset) = code.mapping[rel.target-code.base] - (rel.offset+4);
       }else{
-        printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+        //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
         *(uint32_t*)(code.code + rel.offset) = rel.target - ((uintptr_t)code.code + rel.offset + 4);
       }
     }else if( rel.type == RELOC_IND ){
       /* Unlike for RELOC_OFF type, we write directly to the target, placing the new base address
          plus the offset directly at that address in the original text section */  
-      printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+      //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
       *(uint32_t*)(rel.target) = new_address + rel.offset;
     }
   }
@@ -159,6 +159,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   printf("Original code size: %d\n", code.orig_size);
   printf("Generated code size: %d\n", code.offset);
   printf("Total bytes trimmed: %d\n", trimmed_bytes);
+  printf("New code address: 0x%lx\n", code.code);
   //free(code.mapping);
   page_free(&reloc_mem);
   *new_size = code.code_size;
@@ -311,7 +312,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       *(code->code+code->offset) = *(insn->bytes);
       //disp = code->mapping[insn->address+disp-code->base] - code->offset;
       //memcpy(code->code+code->offset+1, disp, 4);
-      printf("Gen: %s\t(%llx + 5 + %x)\n", insn->insn_str, insn->address, disp);
+      //printf("Gen: %s\t(%llx + 5 + %x)\n", insn->insn_str, insn->address, disp);
       /* Relocation target is instruction address + instruction length + displacement */
       gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
       code->offset += 5;

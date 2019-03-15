@@ -9,12 +9,12 @@ int __real_mprotect(void *addr, size_t len, int prot);
 /* TODO: I may want to name this function miniverse_init */
 void miniverse_entry(const char* entry_fname, uintptr_t entry_address){
   int fd;
-  //printf("Hello: 0x%x, %s\n", entry_address, entry_fname);
+  printf("Hello: 0x%x, %s\n", entry_address, entry_fname);
   /* Restore original entry point */
   fd = open(entry_fname, O_RDONLY);
-  __real_mprotect((void*)(entry_address&0xfffff000), 0x2000, PROT_READ|PROT_WRITE);
+  __real_mprotect((void*)(entry_address&0xfffff000), 0x1000, PROT_READ|PROT_WRITE);
   read(fd, (void*)entry_address, 0x1000);
-  __real_mprotect((void*)(entry_address&0xfffff000), 0x2000, PROT_READ|PROT_EXEC); 
+  __real_mprotect((void*)(entry_address&0xfffff000), 0x1000, PROT_READ|PROT_EXEC); 
   /* This function needs to return to the original entry point of the host
      binary, and therefore we must do the stack cleanup and remove the caller's
      arguments.  This assembly uses the address of the entry_address argument

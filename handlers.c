@@ -64,7 +64,7 @@ int __wrap_printf(const char * format, ...){
    rewriting process first. */
 void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
-  printf("(mmap) PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", PROT_EXEC, ~PROT_EXEC, prot);
+  printf("(mmap) ADDR: 0x%x PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", (uintptr_t)addr, PROT_EXEC, ~PROT_EXEC, prot);
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
     prot &= ~PROT_EXEC; /* Unset the exec bit */
   }
@@ -76,7 +76,7 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
-  printf("(mprotect) PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", PROT_EXEC, ~PROT_EXEC, prot);
+  printf("(mprotect) ADDR: 0x%x PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", (uintptr_t)addr, PROT_EXEC, ~PROT_EXEC, prot);
   //if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
     prot &= ~PROT_EXEC; /* Unconditionally unset the exec bit */
   //}
