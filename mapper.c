@@ -160,7 +160,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   mprotect((void*)address, code.orig_size, PROT_READ);
 
   printf("Original code size: %d\n", code.orig_size);
-  printf("Generated code size: %d\n", code.offset);
+  printf("Generated code size: %d(0x%x)\n", code.offset, code.offset);
   printf("Total bytes trimmed: %d\n", trimmed_bytes);
   printf("New code address: 0x%x\n", (uintptr_t)code.code);
   //free(code.mapping);
