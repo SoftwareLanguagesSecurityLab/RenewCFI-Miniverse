@@ -49,6 +49,7 @@ void add_code_region(uintptr_t address, size_t size){
      present, set its rewritten status to false and return. */
   for( i = 0; i < num_code_regions; i++ ){
     if( region->address == address && region->size == size ){
+      printf("Update code region 0x%x\n", (uintptr_t)region->address);
       region->rewritten = false;
       return;
     }
@@ -130,7 +131,13 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
   printf("(mmap) ADDR: 0x%x PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", (uintptr_t)addr, PROT_EXEC, ~PROT_EXEC, prot);
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
     prot &= ~PROT_EXEC; /* Unset the exec bit */
-    add_code_region((uintptr_t)addr, length); 
+    /* Get actual address, in case mmap is passed 0 for the address */
+    void* real_addr = __real_mmap(addr,length,prot,flags,fd,offset);
+    /* Verify mmap succeeded before adding code region */
+    if( real_addr != MAP_FAILED ){
+      add_code_region((uintptr_t)real_addr, length);
+    } 
+    return real_addr;
   }
   return __real_mmap(addr,length,prot,flags,fd,offset);
 }

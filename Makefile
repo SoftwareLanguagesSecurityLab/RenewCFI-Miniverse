@@ -16,6 +16,7 @@ test: mapper.o
 	# No hooking version (to test without rewriting anything)
 	#$(CC) -m32 -g driver5.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver5
 	$(CC) -m32 -g driver6.c inittester.c -o driver6
+	$(CC) -m32 -g driver7.c handlers.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver7
 
 install: all
 	cp miniverse.h /usr/local/include/miniverse.h
