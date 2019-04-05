@@ -1,13 +1,12 @@
 MUSL_PATH = ~/git/musl/lib
 
-all: mapper.o
-	$(AR) -rsc libminiverse.a mapper.o
+all: miniverse.o
+	$(AR) -rsc libminiverse.a miniverse.o
 	$(CC) -m32 -Wall -Wextra -g -fPIE -shared -static -pie -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a handlers.c $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -o libminiversebin
 	$(CC) -m32 -Wall -Wextra -g bpatch.c inittester.c -o bpatch
 	nasm -f bin -l entry.lst entry.asm
 
-test: mapper.o
-	$(AR) -rsc libminiverse.a mapper.o
+test: all
 	#$(CC) -m32 -g driver.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver
 	#$(CC) -m32 -g driver2.c libminiverse.a -Ltests/ -ltest /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver2
 	#$(CC) -m32 -g driver3.c handlers.c libminiverse.a -Ltests/ -ltest /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver3
