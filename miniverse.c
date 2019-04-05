@@ -63,7 +63,7 @@ void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size);
 void check_target(mv_code_t *code, ss_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target);
 
-uint32_t* gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
+pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
     uintptr_t *new_address, size_t *new_size, uint8_t chunk_size,
     bool (*is_target)(uintptr_t address, uint8_t *bytes)){
   ss_handle handle;
@@ -167,7 +167,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   page_free(&reloc_mem);
   *new_size = code.code_size;
   *new_address = (uintptr_t)code.code;
-  return code.mapping;// TODO: return value that allows caller to free mapping
+  return mapping_mem;
 }
 
 /* Generate a translated version of an instruction to place into generated code buffer. */

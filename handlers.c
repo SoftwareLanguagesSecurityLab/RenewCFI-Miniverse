@@ -25,7 +25,7 @@ typedef struct {
   size_t	size;
   bool		rewritten;
   uintptr_t	new_address;
-  uint32_t*	mapping;
+  pa_entry_t	mapping;
 } code_region_t;
 
 size_t num_code_regions = 0;
@@ -49,8 +49,11 @@ void add_code_region(uintptr_t address, size_t size){
      present, set its rewritten status to false and return. */
   for( i = 0; i < num_code_regions; i++ ){
     if( region->address == address && region->size == size ){
-      printf("Update code region 0x%x\n", (uintptr_t)region->address);
-      region->rewritten = false;
+      if( region->rewritten ){
+        printf("Update code region 0x%x\n", (uintptr_t)region->address);
+        region->rewritten = false;
+        page_free(&region->mapping);
+      }
       return;
     }
     region++;
@@ -59,7 +62,8 @@ void add_code_region(uintptr_t address, size_t size){
   region->address = address;
   region->size = size;
   region->rewritten = false;
-  region->mapping = 0;
+  region->mapping.address = 0;
+  region->mapping.size = 0;
   num_code_regions++;
 }
 
@@ -128,8 +132,8 @@ int __wrap_printf(const char * format, ...){
    fool the rewriter into rewriting an arbitrary memory region. */
 void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
-  printf("(mmap) ADDR: 0x%x PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", (uintptr_t)addr, PROT_EXEC, ~PROT_EXEC, prot);
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
+    printf("(mmap) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
     prot &= ~PROT_EXEC; /* Unset the exec bit */
     /* Get actual address, in case mmap is passed 0 for the address */
     void* real_addr = __real_mmap(addr,length,prot,flags,fd,offset);
@@ -147,8 +151,8 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
-  printf("(mprotect) ADDR: 0x%x PROT_EXEC: %d !PROT_EXEC: %d prot: %d\n", (uintptr_t)addr, PROT_EXEC, ~PROT_EXEC, prot);
   if( (prot & PROT_EXEC) ){
+    printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
     /* Always unset the exec bit if set */
     prot &= ~PROT_EXEC;
     /* Also unset the write bit so we will detect attempts to change already
@@ -184,7 +188,7 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
     abort();
   }
 
-  printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping);
+  //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
   /* If region has not been rewritten yet, rewrite it. */
   if( !region->rewritten ){
 
@@ -227,5 +231,5 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   /* TODO: Refer to REG_EIP without a magic number */
   /* Set instruction pointer to corresponding target in rewritten code */;
   con->uc_mcontext.gregs[14] =
-      (uintptr_t)(region->new_address+region->mapping[target-region->address]);
+      (uintptr_t)(region->new_address+((uint32_t*)region->mapping.address)[target-region->address]);
 }
