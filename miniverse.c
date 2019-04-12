@@ -115,8 +115,10 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
          TODO: We should not allow spare bytes to remain outside the safely generated code, so any
          extra space still allocated that we are not using (such as the rest of a page) should be
          filled with hlt instructions */
+#ifdef DEBUG
       printf("0x%llx: %s\t(SPECIAL)\n", insn.address, insn.insn_str);
       printf("%u bytes trimmed\n", code.offset - code.last_safe_offset);
+#endif
       trimmed_bytes += (code.offset - code.last_safe_offset);
       code.offset = code.last_safe_offset;
       code.reloc_count = code.last_safe_reloc;
@@ -124,7 +126,9 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
     }
   }
 
+#ifdef DEBUG
 printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_size);
+#endif
   /* Make original text section writable before patching relocs, since we will need to modify it */
   mprotect((void*)address, code.orig_size, PROT_READ|PROT_WRITE);
  
@@ -159,10 +163,12 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   /* Remove write permission from original text section after modifying it */
   mprotect((void*)address, code.orig_size, PROT_READ);
 
+#ifdef DEBUG
   printf("Original code size: %d\n", code.orig_size);
   printf("Generated code size: %d(0x%x)\n", code.offset, code.offset);
   printf("Total bytes trimmed: %d\n", trimmed_bytes);
   printf("New code address: 0x%x\n", (uintptr_t)code.code);
+#endif
   //free(code.mapping);
   page_free(&reloc_mem);
   *new_size = code.code_size;
@@ -175,13 +181,17 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
   /* Expand allocated memory for code to fit additional instructions and padding */
   if( code->offset + (3*code->chunk_size) >= code->code_size ){
     /* Allocate one new page and increase code size to reflect the new size */
+#ifdef DEBUG
     printf("Increasing new code size: %d >= %d (0x%x)\n",
         code->offset + (3*code->chunk_size),
         code->code_size, (uintptr_t)code->code_mem.address);
+#endif
     if( page_realloc(&code->code_mem, code->code_size+0x1000) ){
       code->code = code->code_mem.address;
       code->code_size = code->code_mem.size;
+#ifdef DEBUG
       printf("Newly allocated: 0x%x\n", (uintptr_t)code->code_mem.address);
+#endif
     }else{
       puts("ERROR: Failed to allocate memory for new code");
     }
@@ -443,7 +453,9 @@ void check_target(mv_code_t *code, ss_insn *insn){
     start with 0x90, a requirement of the way we plan to deal with jump targets.
   */
   if( is_target ){
+#ifdef DEBUG
     printf("Generating reloc for target @ 0x%x (0x%x)\n", (uintptr_t)(code->code+code->offset), (uintptr_t)(code->offset|0x00000003));
+#endif
     *(code->code+code->offset++) = 0x90;
     /* Generate a relocation entry to patch the ORIGINAL text section at this target address */
     /* Subtract 1 for 0x90 */

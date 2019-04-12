@@ -42,7 +42,9 @@ void add_code_region(uintptr_t address, size_t size){
     /* TODO: flexibly allocate more pages as needed.  For now, ASSUME we only
        need one page to hold data on all code regions */
     page_alloc(&code_regions_mem, 0x1000);
+#ifdef DEBUG
     printf("Allocated code regions at 0x%x\n", (uintptr_t)code_regions_mem.address);
+#endif
   }
   region = code_regions_mem.address;
   /* Iterate through all known regions.  If a matching region is already
@@ -50,7 +52,9 @@ void add_code_region(uintptr_t address, size_t size){
   for( i = 0; i < num_code_regions; i++ ){
     if( region->address == address && region->size == size ){
       if( region->rewritten ){
+#ifdef DEBUG
         printf("Update code region 0x%x\n", (uintptr_t)region->address);
+#endif
         region->rewritten = false;
         page_free(&region->mapping);
       }
@@ -133,7 +137,9 @@ int __wrap_printf(const char * format, ...){
 void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
+#ifdef DEBUG
     printf("(mmap) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
+#endif
     prot &= ~PROT_EXEC; /* Unset the exec bit */
     /* Get actual address, in case mmap is passed 0 for the address */
     void* real_addr = __real_mmap(addr,length,prot,flags,fd,offset);
@@ -152,7 +158,9 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
   if( (prot & PROT_EXEC) ){
+#ifdef DEBUG
     printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
+#endif
     /* Always unset the exec bit if set */
     prot &= ~PROT_EXEC;
     /* Also unset the write bit so we will detect attempts to change already
@@ -221,7 +229,9 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   
     size_t pages = (new_mem.size/0x1000);
   
+#ifdef DEBUG
     printf("Calling real mprotect for exec: 0x%x, 0x%x\n", region->new_address, 0x1000*pages);
+#endif
     /* Call the real, un-wrapped mprotect to actually set these pages as executable */
     __real_mprotect((void*)region->new_address, 0x1000*pages, PROT_EXEC);
 

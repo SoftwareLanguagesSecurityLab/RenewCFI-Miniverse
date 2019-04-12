@@ -19,13 +19,13 @@ uint8_t prologue1[] = {"\x55\x89\xe5"}; // push ebp; mov ebp, esp
 bool is_target(uintptr_t address, uint8_t *bytes){
 //printf("is_target: 0x%x\n", address);
   if( memcmp(prologue1, bytes, 3) == 0 ){
-printf("true: %hhx == %hhx\n", *prologue1, *bytes);
+//printf("true: %hhx == %hhx\n", *prologue1, *bytes);
     return true;
   }else if( address == 0x700015c || address == 0x7000162 ){
-printf("true: Special case 1!\n");
+//printf("true: Special case 1!\n");
     return true; // Special cases for example
   }else if( (address & 0xfff) == 0x68c || (address & 0xfff) == 0x692 ){
-printf("true: Special case 2!\n");
+//printf("true: Special case 2!\n");
     return true; // Special cases for example so
   }
   return false;
