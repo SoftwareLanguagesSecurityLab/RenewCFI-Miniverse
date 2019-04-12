@@ -20,6 +20,15 @@
 #include <ucontext.h>
 #include <sys/ucontext.h> // For hardware-specific registers (TODO: Does not work as expected!)
 
+bool default_is_target(uintptr_t address, uint8_t *bytes){
+  /* Suppress unused parameter warnings */
+  (void)(address);
+  (void)(bytes);
+  return false;
+}
+
+bool (*is_target)(uintptr_t address, uint8_t *bytes) = &default_is_target;
+
 typedef struct {
   uintptr_t	address;
   size_t	size;
@@ -94,23 +103,11 @@ void *__real_mmap(void *addr, size_t length, int prot, int flags,
 
 int __real_mprotect(void *addr, size_t len, int prot);
 
-/* TODO: Actually insert hooks that redirect calls to mmap and mprotect
-   For now we can actually rely on the dynamic loader to hook the functions
-   for us.  When we link, we replace references to the symbol with our wrappers.
-   Perhaps we could use L_PRELOAD at runtime, or our static rewriter.  Regardless,
-   the simplest hook for now shouldn't need these.  */
-void mmap_hook(void *addr){
-  (void)(addr);
-  //mmap_real = mmap;
-}
-
-void mprotect_hook(void *addr){
-  (void)(addr);
-  //mprotect_real = mprotect;
-}
-
-void register_handler(){
+void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes)){
   struct sigaction new_action, old_action;
+  if( my_is_target != NULL ){
+    is_target = my_is_target;
+  }
   /* Use sa_sigaction instead of sa_handler */
   new_action.sa_handler = NULL;
   void* sig_handler = &sigsegv_handler;
@@ -218,7 +215,7 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
     page_alloc(&new_mem, code_size/**NEW_ALLOC_SAFETY*/);
   
     region->mapping = gen_code(orig_code, code_size, region->address,
-        (uintptr_t*)&new_mem.address, &new_mem.size, 16, &is_target);
+        (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
 
     region->new_address = (uintptr_t)new_mem.address;
   

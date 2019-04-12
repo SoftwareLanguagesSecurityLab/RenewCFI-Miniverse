@@ -45,13 +45,6 @@ void miniverse_entry(const char* entry_fname, uintptr_t entry_address){
   );
 }
 
-bool is_target(uintptr_t address, uint8_t *bytes){
-  /* Suppress unused parameter warnings */
-  (void)(address);
-  (void)(bytes);
-  return false;
-}
-
 /* Call our library so that the function is linked into our statically-linked binary */
 int main(){
   uint8_t *orig_code = 0x0;
@@ -60,9 +53,9 @@ int main(){
   uintptr_t new_address = 0x0;
   size_t new_size = 0;
 
-  register_handler();
+  register_handler(NULL);
 
   gen_code(orig_code, code_size, address,
-    &new_address, &new_size, 16, &is_target);
+    &new_address, &new_size, 16, NULL);
   return 0;
 }

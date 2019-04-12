@@ -16,7 +16,7 @@
 /* Simple example of a function prologue to test target alignment */
 uint8_t prologue1[] = {"\x55\x89\xe5"}; // push ebp; mov ebp, esp 
 
-bool is_target(uintptr_t address, uint8_t *bytes){
+bool my_is_target(uintptr_t address, uint8_t *bytes){
 //printf("is_target: 0x%x\n", address);
   if( memcmp(prologue1, bytes, 3) == 0 ){
 //printf("true: %hhx == %hhx\n", *prologue1, *bytes);
@@ -79,7 +79,7 @@ int main(int argc, char** argv){
 	/* Hooks are currently done with linker flags, not runtime functions */
         //mmap_hook(&mmap);
         //mprotect_hook(&mprotect);
-        register_handler();
+        register_handler(&my_is_target);
 
 	uint8_t orig_code[] = "\x8b\x44\x24\x04\x83\xf8\x00\x74\x14\xb8\x19\x00\x00\x07\xc3\x6d\x6f\x64\x65\x3a\x20\x25\x64\x0a\x00\x25\x73\x0a\x00\xb8\x0f\x00\x00\x07\xc3\x90\xeb\xfe\xe9\xff\xff\xff\xfe";
  

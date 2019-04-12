@@ -173,7 +173,7 @@ void* miniverse_init(){
   //mprotect((void*)(0xa000000+BSS_OFFSET_START), BSS_SIZE, PROT_WRITE);
   //munmap((void*)(0xa000000+BSS_OFFSET_START), BSS_SIZE);
   //mmap((void*)(0xa000000+BSS_OFFSET_START), BSS_SIZE, PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-  void (*register_handler)() = (void (*)())(0xa000000 + REGISTER_HANDLER_OFFSET);
-  register_handler();
+  void (*register_handler)(void*) = (void (*)(void*))(0xa000000 + REGISTER_HANDLER_OFFSET);
+  register_handler(NULL);
   return (void*)0x0; /* Do not actually return any pointer, as the handler will call gen_code */
 }

@@ -16,7 +16,7 @@
 /* Simple example of a function prologue to test target alignment */
 uint8_t prologue1[] = {"\x55\x89\xe5"}; // push ebp; mov ebp, esp 
 
-bool is_target(uintptr_t address, uint8_t *bytes){
+bool my_is_target(uintptr_t address, uint8_t *bytes){
 printf("is_target: 0x%x\n", address);
   if( memcmp(prologue1, bytes, 3) == 0 ){
 printf("true: %hhx == %hhx\n", *prologue1, *bytes);
