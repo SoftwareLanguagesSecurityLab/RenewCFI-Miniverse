@@ -4,6 +4,7 @@
 
 #define NOP 0x90
 #define RET_NEAR 0xc3
+#define RET_NEAR_IMM 0xc2
 #define CALL_REL_NEAR 0xe8
 #define JMP_REL_SHORT 0xeb
 #define JMP_REL_NEAR 0xe9
@@ -49,8 +50,8 @@ typedef struct mv_code_t{
 
 uint8_t indirect_template_before[] = "\x50\x8b";
 uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
-uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x54\x24\xf8";
-uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\x3f\x50\x58\x58\xff\x64\x24\xf8";
+uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
+uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x64\x24\xf8";
 
 bool is_pic(mv_code_t *code, uintptr_t address);
 
@@ -247,18 +248,31 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
 }
 
 inline void gen_ret(mv_code_t *code, ss_insn *insn){
+  //printf("RET: %llx %s\n", insn->address, insn->insn_str);
+  size_t new_code_size = 8;
   /* TODO: Handle far returns */
   /* TODO: Handle returns that pop extra bytes from stack */
-  if( *(insn->bytes) == RET_NEAR ){
+  if( *(insn->bytes) == RET_NEAR || *(insn->bytes) == RET_NEAR_IMM ){
+     if( *(insn->bytes) == RET_NEAR_IMM ){
+       new_code_size = 10;
+     }
      /* Mask value at esp (the return address) to ensure return can only go to aligned chunk */
-     gen_padding(code, insn, 8); 
+     gen_padding(code, insn, new_code_size); 
      check_target(code, insn);
      *(code->code+code->offset) = 0x81;// AND r/m32, imm 32
      *(code->code+code->offset+1) = 0x24;// r/m byte
      *(code->code+code->offset+2) = 0x24;// sib byte
      *(uintptr_t*)(code->code+code->offset+3) = code->mask;// immediate value holds mask
-     *(code->code+code->offset+7) = RET_NEAR;// place ret instruction after masking
-     code->offset += 8; // Size of and+ret instruction pair  
+     if( *(insn->bytes) == RET_NEAR ){
+       // place ret instruction after masking
+       *(code->code+code->offset+7) = RET_NEAR;
+     }else{
+       // If RET_NEAR_IMM
+       // place ret <imm> instruction after masking
+       // Copy 3 bytes of return instruction encoding: c2 XX XX
+       memcpy( code->code+code->offset+7, insn->bytes, 3);
+     }
+     code->offset += new_code_size; // Size of and+ret instruction pair  
      code->last_safe_offset = code->offset;
      code->last_safe_reloc = code->reloc_count;
   }
@@ -359,10 +373,14 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
 }
 
 void gen_indirect(mv_code_t *code, ss_insn *insn){
+  //printf("INDIRECT: %llx %s\n", insn->address, insn->insn_str);
   /* TODO: This does not handle
        target in esp
        overlapping pointers
        optimizations for targets in registers
+       what is the PROPER value we should have for the mask??
+       why mask the top bits?  That breaks any code at a high address,
+       which appears in real programs!
   */
   /*
     push eax
@@ -372,7 +390,8 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
       OR test al, 3 (keystone doesn't like the former)
     cmovnz eax, [eax]
     ---
-    and eax, 0x3FFFFFE0
+    ;and eax, 0x3FFFFFE0
+    and eax, 0xFFFFFFF0
     mov [esp-4],eax
       OR push eax, pop eax
     pop eax

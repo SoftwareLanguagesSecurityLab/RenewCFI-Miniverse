@@ -8,6 +8,7 @@
       page to the new rewritten executable page.  It also should set the
       original writable page to only be readable, I think....
 */
+#define DEBUG
 #include <sys/mman.h>
 #include <signal.h>
 #include "handlers.h"
@@ -154,9 +155,12 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
+#ifdef DEBUG
+  printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
+#endif
   if( (prot & PROT_EXEC) ){
 #ifdef DEBUG
-    printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
+  printf("(mprotect YES) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
 #endif
     /* Always unset the exec bit if set */
     prot &= ~PROT_EXEC;
@@ -190,6 +194,7 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      call).  If not, then the segfault must have been triggered by some actual
      invalid memory access, so abort. */
   if( !get_code_region(&region, target) ){
+    printf("FATAL ERROR: 0x%x never encountered in mmap/mprotect!\n", target);
     abort();
   }
 
