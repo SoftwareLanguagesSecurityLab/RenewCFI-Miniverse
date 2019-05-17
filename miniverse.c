@@ -131,7 +131,8 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
 printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_size);
 #endif
   /* Make original text section writable before patching relocs, since we will need to modify it */
-  mprotect((void*)address, code.orig_size, PROT_READ|PROT_WRITE);
+  /* Assume original text section has been set to writable by caller */
+  //mprotect((void*)address, code.orig_size, PROT_READ|PROT_WRITE);
  
   //printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
   // Loop through relocations and patch target destinations
@@ -162,7 +163,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   }
 
   /* Remove write permission from original text section after modifying it */
-  mprotect((void*)address, code.orig_size, PROT_READ);
+  //mprotect((void*)address, code.orig_size, PROT_READ);
 
 #ifdef DEBUG
   printf("Original code size: %d\n", code.orig_size);
@@ -496,8 +497,10 @@ void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target)
    hopefully this will be sufficient for automatically generated PIC on Linux */
 bool is_pic(mv_code_t *code, uintptr_t address){
   /* Check range, since some target addresses may be nonsense */
+  /* Ensure that we leave an additional 4 bytes of space to avoid reading
+     outside the original region */
   /* Encoding of "mov ecx,[esp] ; ret", which is the code in get_pc_thunk */
-  if( address >= code->base && address < code->base + code->orig_size && 
+  if( address >= code->base && address < code->base + code->orig_size-4 && 
       *(uint32_t*)(address) == 0xc3240c8b ){
     return true;
   }

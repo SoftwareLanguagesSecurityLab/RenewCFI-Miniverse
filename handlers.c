@@ -35,8 +35,11 @@ typedef struct {
   size_t	size;
   bool		rewritten;
   uintptr_t	new_address;
+  size_t	new_size;
   pa_entry_t	mapping;
 } code_region_t;
+
+void rewrite_region(code_region_t* region);
 
 size_t num_code_regions = 0;
 pa_entry_t code_regions_mem = {NULL,0};
@@ -69,6 +72,19 @@ void add_code_region(uintptr_t address, size_t size){
         page_free(&region->mapping);
       }
       return;
+    }else if( address > region->address &&
+              address < region->address+region->size){
+      /* If a new region falls within an existing region, split it
+         and omit the new region from that existing region.
+         If instead the new region extends to the end of the old region
+         or beyond the end, just shorten the old region. */
+      if( address+size < region->address+region->size ){
+        /* TODO: Handle splitting regions */
+        printf("FATAL ERROR: Splitting regions unimplemented!\n");
+        abort();
+      }else{
+        region->size = address - region->address;
+      }
     }
     region++;
   }
@@ -162,31 +178,83 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
 #ifdef DEBUG
   printf("(mprotect YES) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
 #endif
+    add_code_region((uintptr_t)addr, len); 
     /* Always unset the exec bit if set */
     prot &= ~PROT_EXEC;
-    /* Also unset the write bit so we will detect attempts to change already
-       rewritten code TODO: detect attempts to switch from exec to writable */
-    prot &= ~PROT_WRITE;
-    add_code_region((uintptr_t)addr, len); 
+    if( (prot & PROT_WRITE) ){
+      /* Also unset the write bit so we will detect attempts to change already
+         rewritten code TODO: detect attempts to switch from exec to writable */
+      prot &= ~PROT_WRITE;
+    }else{
+      /* If write is NOT set, then let's try rewriting this region immediately
+         since we know the code is done writing to it for now.  Trying to
+         proactively rewrite a region might cause some issues, but it also will
+         partially address the issue of rewritten code attempting to indirect
+         call into un-rewritten code.  This doesn't fix the issue for RWX code,
+         but for generated code with good hygiene it should work. */
+      code_region_t* region;
+      get_code_region(&region, (uintptr_t)addr);
+printf("Rewriting 0x%x (size 0x%x) early!\n", region->address, region->size);
+      rewrite_region(region);
+printf("Finished rewriting 0x%x, NOT calling mprotect\n", region->address);
+      /* Indicate success; permissions for region are now RW regardless of
+         original arguments to mprotect intending to make it non-writable */
+      return 0;
+    }
   }
   return __real_mprotect(addr,len,prot);
 }
 
-/*   TODO: Not thread safe? */
-//uintptr_t new_address = 0x0000000;// address of start of generated code; let kernel decide where
-// Allocate a larger size than the rewriter thinks, in order to reserve enough space to accommodate
-// our expanded rewritten code. TODO: Handle this in a less hackish way
-#define NEW_ALLOC_SAFETY 4
+void rewrite_region(code_region_t* region){
+
+  /* TODO: Determine if it is EVER safe to free a mapping or rewritten code,
+     as we may always have stale pointers floating around. */
+
+  uint8_t *orig_code = (uint8_t *)(region->address);
+  size_t code_size = region->size;
+  pa_entry_t new_mem;
+
+#ifdef DEBUG
+  printf("Calling real mprotect for orig: 0x%x, 0x%x\n", orig_code, code_size);
+#endif
+  /* Set original code to be readable and writable,
+     regardless of what it was set to before,
+     so we may disassemble it and write to it.
+     TODO: Set as read-only afterwards to detect changes */
+  __real_mprotect((void*)orig_code, code_size, PROT_READ|PROT_WRITE);
+
+  page_alloc(&new_mem, code_size);
+
+  region->mapping = gen_code(orig_code, code_size, region->address,
+      (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
+
+  region->new_address = (uintptr_t)new_mem.address;
+  region->new_size = (uintptr_t)new_mem.size;
+
+  size_t pages = (new_mem.size/0x1000);
+
+#ifdef DEBUG
+  printf("Calling real mprotect for exec: 0x%x, 0x%x\n", region->new_address, 0x1000*pages);
+#endif
+
+  /* Call the real, un-wrapped mprotect to actually set these pages
+     as executable */
+  __real_mprotect((void*)region->new_address, 0x1000*pages, PROT_EXEC);
+
+  region->rewritten = true;
+}
+
+/* TODO: refer to REG_EIP using a system header rather than this define */
+#define REG_EIP 14
+/* Catch all segfaults here and detect attempts to execute generated code
+   so that we can rewrite it or redirect it to existing rewritten code. */
 void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   (void)(sig);
   (void)(info);
-  //info->si_addr = (void*)( (uintptr_t)(&mmap_hook) + 5 ); /* Try setting return target to a ret */
   ucontext_t *con = (ucontext_t*)ucontext;
-  /* Machine-dependent definition of processor state: set new value for eip */
-  /* TODO: Figure out how to refer to REG_EIP rather than this magic number 14 */
   /* Retrieve the address of the instruction pointer.  If the address is in
      a region that needs rewriting, rewrite it. */
-  uintptr_t target = con->uc_mcontext.gregs[14];
+  uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
   code_region_t* region;
   
   /* Check whether instruction pointer is in a known code region (a region we
@@ -201,47 +269,10 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
   /* If region has not been rewritten yet, rewrite it. */
   if( !region->rewritten ){
-
-    /* TODO: Check if mapping is a NULL pointer or not.  If not, that means we
-       have already rewritten this region before and need to free the mapping
-       first before rewriting it again, as it must have been modified.
-       Alternatively, if we set the original region to read-only after
-       rewriting, detect attempts to write to it and free the mapping then. */
-  
-    uint8_t *orig_code = (uint8_t *)(region->address);
-    size_t code_size = region->size;
-    pa_entry_t new_mem;
-
-    /* Set original code to be readable and writable, regardless of what it was set to before,
-       so we may disassemble it and write to it.
-       TODO: Set as read-only afterwards to detect changes */
-    __real_mprotect((void*)orig_code, code_size, PROT_READ|PROT_WRITE);
-  
-    page_alloc(&new_mem, code_size/**NEW_ALLOC_SAFETY*/);
-  
-    region->mapping = gen_code(orig_code, code_size, region->address,
-        (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
-
-    region->new_address = (uintptr_t)new_mem.address;
-  
-    /* Don't free the mapping because we will need it for subsequent calls!  Do we have to keep
-       ALL mappings for all rewritten code regions always allocated so we can look up the target in
-       the handler? */
-    //free(mapping);
-  
-    size_t pages = (new_mem.size/0x1000);
-  
-#ifdef DEBUG
-    printf("Calling real mprotect for exec: 0x%x, 0x%x\n", region->new_address, 0x1000*pages);
-#endif
-    /* Call the real, un-wrapped mprotect to actually set these pages as executable */
-    __real_mprotect((void*)region->new_address, 0x1000*pages, PROT_EXEC);
-
-    region->rewritten = true;
+    rewrite_region(region);
   }
 
-  /* TODO: Refer to REG_EIP without a magic number */
   /* Set instruction pointer to corresponding target in rewritten code */;
-  con->uc_mcontext.gregs[14] =
+  con->uc_mcontext.gregs[REG_EIP] =
       (uintptr_t)(region->new_address+((uint32_t*)region->mapping.address)[target-region->address]);
 }

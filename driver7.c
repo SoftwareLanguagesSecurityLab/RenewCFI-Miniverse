@@ -95,7 +95,7 @@ int main(int argc, char** argv){
 	memcpy(code_buffer, orig_code, sizeof(orig_code));
 
 	/* Try to make our code executable (but only 1st page); our mprotect hook will prevent this */
-        mprotect(code_buffer, 4096, PROT_EXEC);
+        mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
 
         uint32_t result = code_caller((uintptr_t)code_buffer,0);
         printf("Result for 0: %s (%x)\n", (uint8_t*)result, result );
