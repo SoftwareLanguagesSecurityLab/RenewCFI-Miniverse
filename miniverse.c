@@ -2,6 +2,8 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#define DO_RET_LOOKUPS 1
+
 #define NOP 0x90
 #define RET_NEAR 0xc3
 #define RET_NEAR_IMM 0xc2
@@ -46,8 +48,13 @@ typedef struct mv_code_t{
   uint32_t last_safe_offset; // Last offset before the most recent unconditional jump or ret
   uintptr_t mask;
   bool (*is_target)(uintptr_t address, uint8_t *bytes);
+#ifdef DO_RET_LOOKUPS
+  bool was_prev_inst_call;
+#endif
 } mv_code_t;
 
+uint8_t ret_template[] = "\x87\x04\x24\xa8\x03\x0f\x45\x00";
+uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
 uint8_t indirect_template_before[] = "\x50\x8b";
 uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
 uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
@@ -94,6 +101,9 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   code.last_safe_reloc = 0;
   code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
   code.is_target = is_target;
+#ifdef DO_RET_LOOKUPS
+  code.was_prev_inst_call = false;
+#endif
   
   ss_open(SS_MODE_32, &handle, bytes, bytes_size, (uint64_t)address);
 
@@ -246,13 +256,60 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
         code->offset += insn->size; // Since insn is not modified, increment by instruction size
       }
   }
+#ifdef DO_RET_LOOKUPS
+  if( insn->id == SS_INS_CALL ){
+    code->was_prev_inst_call = true;
+  }else{
+    code->was_prev_inst_call = false;
+  }
+#endif
 }
 
+#ifdef DO_RET_LOOKUPS
 inline void gen_ret(mv_code_t *code, ss_insn *insn){
+  size_t ret_size = 1;
   //printf("RET: %llx %s\n", insn->address, insn->insn_str);
-  size_t new_code_size = 8;
+  /* Rewrite ret instructions to perform lookups just like indirect
+     jmp and call instructions, in case the return address is an old
+     address that was not placed on the stack by one of our rewritten
+     call instructions */
   /* TODO: Handle far returns */
-  /* TODO: Handle returns that pop extra bytes from stack */
+  /*
+    xchg eax,[esp]
+    test al, 3
+    cmovnz eax,[eax]
+    ---                       (chunk boundary)
+    and eax, 0xFFFFFFF0
+    xchg eax,[esp]
+    ret <imm?>
+  */
+  if( *(insn->bytes) == RET_NEAR_IMM ){
+    ret_size = 3;
+  }
+
+  /* Conditionally load mapping entry */
+  gen_padding(code, insn, sizeof(ret_template)-1);
+  check_target(code, insn);
+  memcpy(code->code+code->offset, ret_template, sizeof(ret_template)-1);
+  code->offset += sizeof(ret_template)-1;
+  
+  /* Mask address regardless of source (in new chunk) */
+  gen_padding(code, insn, sizeof(ret_template_mask)-1+ret_size);
+  memcpy(code->code+code->offset,ret_template_mask,sizeof(ret_template_mask)-1);
+  code->offset += sizeof(ret_template_mask)-1;
+  
+  /* copy return instruction over */
+  memcpy( code->code+code->offset, insn->bytes, ret_size);
+  code->offset += ret_size;
+
+  code->last_safe_offset = code->offset;
+  code->last_safe_reloc = code->reloc_count;
+}
+#else
+inline void gen_ret(mv_code_t *code, ss_insn *insn){
+  size_t new_code_size = 8;
+  //printf("RET: %llx %s\n", insn->address, insn->insn_str);
+  /* TODO: Handle far returns */
   if( *(insn->bytes) == RET_NEAR || *(insn->bytes) == RET_NEAR_IMM ){
      if( *(insn->bytes) == RET_NEAR_IMM ){
        new_code_size = 10;
@@ -278,6 +335,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
      code->last_safe_reloc = code->reloc_count;
   }
 }
+#endif // End check for DO_RET_LOOKUPS
 
 inline void gen_cond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
@@ -442,6 +500,11 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
 
 void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
+#ifdef DO_RET_LOOKUPS
+  if( code->was_prev_inst_call ){
+    is_target = true;
+  }
+#endif
   /* If we have selected a chunk size that is not zero AND the instruction is not already aligned,
      pad to chunk size whenever we encounter either:
        -An instruction that does not evenly fit within a chunk.
@@ -468,6 +531,11 @@ void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
 
 void check_target(mv_code_t *code, ss_insn *insn){
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
+#ifdef DO_RET_LOOKUPS
+  if( code->was_prev_inst_call ){
+    is_target = true;
+  }
+#endif
   /*
     Insert ONE extra nop if instruction is a target, so that all targets
     start with 0x90, a requirement of the way we plan to deal with jump targets.
