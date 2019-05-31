@@ -8,7 +8,7 @@
       page to the new rewritten executable page.  It also should set the
       original writable page to only be readable, I think....
 */
-//#define DEBUG
+#define DEBUG
 #include <sys/mman.h>
 #include <signal.h>
 #include "handlers.h"
@@ -63,9 +63,11 @@ void add_code_region(uintptr_t address, size_t size){
   }
   region = code_regions_mem.address;
   /* Iterate through all known regions.  If a matching region is already
-     present, set its rewritten status to false and return. */
+     present, set its rewritten status to false and return.
+     If specified size is bigger than the existing region, just expand it. */
   for( i = 0; i < num_code_regions; i++ ){
-    if( region->address == address && region->size == size ){
+    if( region->address == address && region->size <= size ){
+      region->size = size;
       if( region->rewritten ){
 #ifdef DEBUG
         printf("Update code region 0x%x\n", (uintptr_t)region->address);
@@ -206,18 +208,17 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
     }
   }else if( (prot & PROT_WRITE) && get_code_region(&region,(uintptr_t)addr) ){
 #ifdef DEBUG
-    printf("Detected setting already present region %x to writable!\n", (uintptr_t)addr);
+    printf("Detected present region 0x%x (mprotect addr 0x%x) -> writable!\n", region->address, (uintptr_t)addr);
+    printf("Copying from %x to %x, %x bytes!\n", (uintptr_t)(region->backup_address+(addr-region->address)), (uintptr_t)addr, len);
 #endif
     /* If the code is being set to writable but not executable,
        AND if the address is in an existing region,
        restore original bytes to the region before program can write to it */
-    if( region->address != (uintptr_t)addr ){
-      /* TODO: Handle a sub-region being set writable (vs entire region) */
-      printf("FATAL ERROR: Sub-region backup restoration unimplemented!\n");
-      abort();
-    }
     int result = __real_mprotect(addr,len,prot); /* Set writable first */
-    memcpy((void*)region->address,(void*)region->backup_address,region->size);
+    /* Restore the bytes for full region or whichever sub-region has been
+       set writable; after this sub-region is set back to executable it
+       will be split into a separate region when we attempt to rewrite it. */
+    memcpy(addr,(void*)(region->backup_address+(addr-region->address)),len);
     return result;
   }
   return __real_mprotect(addr,len,prot);
@@ -265,6 +266,9 @@ void rewrite_region(code_region_t* region){
      as executable */
   __real_mprotect((void*)region->new_address, 0x1000*pages, PROT_EXEC);
 
+#ifdef DEBUG
+  printf("Region 0x%x is rewritten\n", region->address);
+#endif
   region->rewritten = true;
 }
 
