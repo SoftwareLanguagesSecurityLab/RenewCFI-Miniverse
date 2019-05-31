@@ -37,7 +37,7 @@ typedef struct {
   bool		rewritten;
   uintptr_t	new_address;
   size_t	new_size;
-  uintptr_t	backup_address; /* Backup copy of original bytes */
+  pa_entry_t	backup; /* Backup copy of original bytes */
   pa_entry_t	mapping;
 } code_region_t;
 
@@ -96,6 +96,10 @@ void add_code_region(uintptr_t address, size_t size){
   region->address = address;
   region->size = size;
   region->rewritten = false;
+  region->new_address = 0;
+  region->new_size = 0;
+  region->backup.address = 0;
+  region->backup.size = 0;
   region->mapping.address = 0;
   region->mapping.size = 0;
   num_code_regions++;
@@ -209,7 +213,7 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
   }else if( (prot & PROT_WRITE) && get_code_region(&region,(uintptr_t)addr) ){
 #ifdef DEBUG
     printf("Detected present region 0x%x (mprotect addr 0x%x) -> writable!\n", region->address, (uintptr_t)addr);
-    printf("Copying from %x to %x, %x bytes!\n", (uintptr_t)(region->backup_address+(addr-region->address)), (uintptr_t)addr, len);
+    printf("Copying from %x to %x, %x bytes!\n", (uintptr_t)((uintptr_t)region->backup.address+(addr-region->address)), (uintptr_t)addr, len);
 #endif
     /* If the code is being set to writable but not executable,
        AND if the address is in an existing region,
@@ -218,7 +222,7 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
     /* Restore the bytes for full region or whichever sub-region has been
        set writable; after this sub-region is set back to executable it
        will be split into a separate region when we attempt to rewrite it. */
-    memcpy(addr,(void*)(region->backup_address+(addr-region->address)),len);
+    memcpy(addr,(void*)((uintptr_t)region->backup.address+(addr-region->address)),len);
     return result;
   }
   return __real_mprotect(addr,len,prot);
@@ -243,12 +247,35 @@ void rewrite_region(code_region_t* region){
      TODO: Set as read-only afterwards to detect changes */
   __real_mprotect((void*)orig_code, code_size, PROT_READ|PROT_WRITE);
 
+  /* Free old rewritten code, since after rewriting, it is out of date.
+     TODO: There may be stale pointers into the old rewritten code, so this
+     probably cannot actually be freed safely.  However, let's try doing
+     this anyway, because those stale pointers into the old rewritten code
+     might also fail, since they would be pointing to stale code.  It would
+     be better to have an obvious, immediate segfault than have wrong code
+     run.  If I find code that fails due to trying to jump to unmapped code
+     that was previously rewritten, then I can fix it then. */
+  if( region->new_address != 0 ){
+    new_mem.address = (void*)region->new_address;
+    new_mem.size = region->size;
+    page_free(&new_mem);
+  }
+
   page_alloc(&new_mem, code_size);
 
+  /* Free old backup if one is present */
+  if( region->backup.address != 0 ){
+#ifdef DEBUG
+    printf("Free old backup: 0x%x, len 0x%x\n", (uintptr_t)region->backup.address, region->backup.size);
+#endif
+    backup_mem.address = region->backup.address;
+    backup_mem.size = region->backup.size;
+    page_free(&backup_mem);
+  }
   /* Backup original bytes before rewriting and patching old code section */
   page_alloc(&backup_mem, code_size);
   memcpy(backup_mem.address, orig_code, code_size);
-  region->backup_address = (uintptr_t)backup_mem.address;
+  region->backup = backup_mem;
 
   region->mapping = gen_code(orig_code, code_size, region->address,
       (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
