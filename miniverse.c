@@ -133,6 +133,9 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
       trimmed_bytes += (code.offset - code.last_safe_offset);
       code.offset = code.last_safe_offset;
       code.reloc_count = code.last_safe_reloc;
+#ifdef DO_RET_LOOKUPS
+      code.was_prev_inst_call = false;
+#endif
       //gen_insn(&code, insn);
     }
   }

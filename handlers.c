@@ -8,13 +8,14 @@
       page to the new rewritten executable page.  It also should set the
       original writable page to only be readable, I think....
 */
-#define DEBUG
+//#define DEBUG
 #include <sys/mman.h>
 #include <signal.h>
 #include "handlers.h"
 
 #include "miniverse.h"
  
+#include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -36,6 +37,7 @@ typedef struct {
   bool		rewritten;
   uintptr_t	new_address;
   size_t	new_size;
+  uintptr_t	backup_address; /* Backup copy of original bytes */
   pa_entry_t	mapping;
 } code_region_t;
 
@@ -171,6 +173,7 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
+  code_region_t* region;
 #ifdef DEBUG
   printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
 #endif
@@ -192,15 +195,30 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
          partially address the issue of rewritten code attempting to indirect
          call into un-rewritten code.  This doesn't fix the issue for RWX code,
          but for generated code with good hygiene it should work. */
-      code_region_t* region;
       get_code_region(&region, (uintptr_t)addr);
-printf("Rewriting 0x%x (size 0x%x) early!\n", region->address, region->size);
+#ifdef DEBUG
+      printf("Rewriting 0x%x (size 0x%x) early!\n", region->address, region->size);
+#endif
       rewrite_region(region);
-printf("Finished rewriting 0x%x, NOT calling mprotect\n", region->address);
       /* Indicate success; permissions for region are now RW regardless of
          original arguments to mprotect intending to make it non-writable */
       return 0;
     }
+  }else if( (prot & PROT_WRITE) && get_code_region(&region,(uintptr_t)addr) ){
+#ifdef DEBUG
+    printf("Detected setting already present region %x to writable!\n", (uintptr_t)addr);
+#endif
+    /* If the code is being set to writable but not executable,
+       AND if the address is in an existing region,
+       restore original bytes to the region before program can write to it */
+    if( region->address != (uintptr_t)addr ){
+      /* TODO: Handle a sub-region being set writable (vs entire region) */
+      printf("FATAL ERROR: Sub-region backup restoration unimplemented!\n");
+      abort();
+    }
+    int result = __real_mprotect(addr,len,prot); /* Set writable first */
+    memcpy((void*)region->address,(void*)region->backup_address,region->size);
+    return result;
   }
   return __real_mprotect(addr,len,prot);
 }
@@ -213,9 +231,10 @@ void rewrite_region(code_region_t* region){
   uint8_t *orig_code = (uint8_t *)(region->address);
   size_t code_size = region->size;
   pa_entry_t new_mem;
+  pa_entry_t backup_mem;
 
 #ifdef DEBUG
-  printf("Calling real mprotect for orig: 0x%x, 0x%x\n", orig_code, code_size);
+  printf("Calling real mprotect for orig: 0x%x, 0x%x\n", (uintptr_t)orig_code, code_size);
 #endif
   /* Set original code to be readable and writable,
      regardless of what it was set to before,
@@ -224,6 +243,11 @@ void rewrite_region(code_region_t* region){
   __real_mprotect((void*)orig_code, code_size, PROT_READ|PROT_WRITE);
 
   page_alloc(&new_mem, code_size);
+
+  /* Backup original bytes before rewriting and patching old code section */
+  page_alloc(&backup_mem, code_size);
+  memcpy(backup_mem.address, orig_code, code_size);
+  region->backup_address = (uintptr_t)backup_mem.address;
 
   region->mapping = gen_code(orig_code, code_size, region->address,
       (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
