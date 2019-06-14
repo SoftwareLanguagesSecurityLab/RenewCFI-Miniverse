@@ -256,9 +256,11 @@ void rewrite_region(code_region_t* region){
      run.  If I find code that fails due to trying to jump to unmapped code
      that was previously rewritten, then I can fix it then. */
   if( region->new_address != 0 ){
-    new_mem.address = (void*)region->new_address;
-    new_mem.size = region->size;
-    page_free(&new_mem);
+    printf("TODO: handle old rewritten code: 0x%x (len 0x%x)\n", region->new_address, region->size);
+    //new_mem.address = (void*)region->new_address;
+    //new_mem.size = region->size;
+    //__real_mprotect((void*)region->new_address, region->size, PROT_READ);
+    //page_free(&new_mem);
   }
 
   page_alloc(&new_mem, code_size);

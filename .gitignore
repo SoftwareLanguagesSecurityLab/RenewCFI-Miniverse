@@ -6,4 +6,5 @@
 *.o
 *.so
 *.lst
+*.s
 peda-session-*.txt
