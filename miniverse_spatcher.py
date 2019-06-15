@@ -5,8 +5,6 @@ modified version, in which each function label is preceded by ".align 16"
 and has a single "nop" inserted as its first instruction.
 Also, a subset of indirect call instructions are padded so that the instruction
 after the call is 16-byte aligned.
-TODO: I have forgotten to insert a nop after indirect calls.  Verify that this
-will cause the problems we expect if the wrong instruction falls after.
 '''
 import sys,re
 
@@ -53,7 +51,7 @@ if __name__ == '__main__':
         out_buf +='\tnop\n%s\n'%lines[i]
       elif call_indirect.match(lines[i]):
         # We want the instruction after this indirect call to be 16-byte aligned
-        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n'%lines[i]
+        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
       else:
         # Copy all irrelevant lines without modification
         out_buf += '%s\n'%lines[i]

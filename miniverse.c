@@ -53,7 +53,7 @@ typedef struct mv_code_t{
 #endif
 } mv_code_t;
 
-uint8_t ret_template[] = "\x87\x04\x24\xa8\x03\x0f\x45\x00";
+uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
 uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
 uint8_t indirect_template_before[] = "\x50\x8b";
 uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
@@ -279,7 +279,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
   /* TODO: Handle far returns */
   /*
     xchg eax,[esp]
-    test al, 3
+    test byte ptr [eax], 3
     cmovnz eax,[eax]
     ---                       (chunk boundary)
     and eax, 0xFFFFFFF0
@@ -449,7 +449,6 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     mov eax, <MOD/RM>
     ---
     test byte ptr [eax], 3
-      OR test al, 3 (keystone doesn't like the former)
     cmovnz eax, [eax]
     ---
     ;and eax, 0x3FFFFFE0
