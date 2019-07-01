@@ -171,7 +171,11 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
       /* Unlike for RELOC_OFF type, we write directly to the target, placing the new base address
          plus the offset directly at that address in the original text section */  
       //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
-      *(uint32_t*)(rel.target) = (uintptr_t)code.code + rel.offset;
+      if( rel.target <= (uintptr_t)code.base+code.orig_size-4 ){
+        *(uint32_t*)(rel.target) = (uintptr_t)code.code + rel.offset;
+      }else{
+        printf("WARNING: Target too close to code boundary\n");
+      }
     }
   }
 

@@ -29,6 +29,12 @@ void print_callback(){
   puts("Hello callback!");
 }
 
+void rewrite_callback(){
+  puts("Pretending to rewrite code!");
+  mprotect((void*)0x7000000, 0x1000, PROT_READ|PROT_WRITE);
+  mprotect((void*)0x7000000, 0x1000, PROT_EXEC|PROT_READ);
+}
+
 int main(int argc, char** argv){
 
 	/* Hooks are currently done with linker flags, not runtime functions */
@@ -53,6 +59,8 @@ int main(int argc, char** argv){
 	// this line generates, so that the return address for the instruction
 	// after this call is aligned!
         uint32_t res = ((uint32_t (*)(uint32_t))code_buffer)((uint32_t)&print_callback);
+        printf("Result: %d Expected: 4\n", res );
+        res = ((uint32_t (*)(uint32_t))code_buffer)((uint32_t)&rewrite_callback);
         printf("Result: %d Expected: 4\n", res );
 
 	return 0;

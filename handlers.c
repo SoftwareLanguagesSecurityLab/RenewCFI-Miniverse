@@ -8,7 +8,7 @@
       page to the new rewritten executable page.  It also should set the
       original writable page to only be readable, I think....
 */
-#define DEBUG
+//#define DEBUG
 #include <sys/mman.h>
 #include <signal.h>
 #include "handlers.h"
@@ -73,7 +73,6 @@ void add_code_region(uintptr_t address, size_t size){
         printf("Update code region 0x%x\n", (uintptr_t)region->address);
 #endif
         region->rewritten = false;
-        page_free(&region->mapping);
       }
       return;
     }else if( address > region->address &&
@@ -235,7 +234,10 @@ void rewrite_region(code_region_t* region){
 
   uint8_t *orig_code = (uint8_t *)(region->address);
   size_t code_size = region->size;
+  size_t i;
+  uint32_t offset;
   pa_entry_t new_mem;
+  pa_entry_t old_mapping;
   pa_entry_t backup_mem;
 
 #ifdef DEBUG
@@ -247,21 +249,7 @@ void rewrite_region(code_region_t* region){
      TODO: Set as read-only afterwards to detect changes */
   __real_mprotect((void*)orig_code, code_size, PROT_READ|PROT_WRITE);
 
-  /* Free old rewritten code, since after rewriting, it is out of date.
-     TODO: There may be stale pointers into the old rewritten code, so this
-     probably cannot actually be freed safely.  However, let's try doing
-     this anyway, because those stale pointers into the old rewritten code
-     might also fail, since they would be pointing to stale code.  It would
-     be better to have an obvious, immediate segfault than have wrong code
-     run.  If I find code that fails due to trying to jump to unmapped code
-     that was previously rewritten, then I can fix it then. */
-  if( region->new_address != 0 ){
-    printf("TODO: handle old rewritten code: 0x%x (len 0x%x)\n", region->new_address, region->size);
-    //new_mem.address = (void*)region->new_address;
-    //new_mem.size = region->size;
-    //__real_mprotect((void*)region->new_address, region->size, PROT_READ);
-    //page_free(&new_mem);
-  }
+  old_mapping = region->mapping;
 
   page_alloc(&new_mem, code_size);
 
@@ -281,6 +269,39 @@ void rewrite_region(code_region_t* region){
 
   region->mapping = gen_code(orig_code, code_size, region->address,
       (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
+
+  /* Patch old code, since after rewriting, it is out of date.
+     TODO: There may be stale pointers into the old rewritten code, so this
+     probably cannot actually be freed safely.  However, let's try doing
+     this anyway, because those stale pointers into the old rewritten code
+     might also fail, since they would be pointing to stale code.  It would
+     be better to have an obvious, immediate segfault than have wrong code
+     run.  If I find code that fails due to trying to jump to unmapped code
+     that was previously rewritten, then I can fix it then. */
+  if( region->new_address != 0 ){
+#ifdef DEBUG
+    printf("Patch old rewritten code: 0x%x (len 0x%x)\n", region->new_address, region->new_size);
+#endif
+    __real_mprotect((void*)region->new_address, region->new_size, PROT_READ|PROT_WRITE);
+    for( i = 0; i < old_mapping.size/4; i++ ){
+      offset = *((uint32_t*)old_mapping.address+i);
+#ifdef DEBUG
+      if( offset >= region->new_size ){
+        printf("WARNING: Too large offset 0x%x\n", offset);
+      }
+#endif
+      if( offset < region->new_size && offset % 16 == 0 && i < region->mapping.size/4){
+        /* Patch in address at target in old rewritten code with the true
+           destination in the new rewritten code, which we REALLY HOPE is also
+           aligned.  OR with 0x3 to indicate a valid entry, will be masked */
+        *((uint32_t*)region->new_address+offset/4) = \
+            (*((uint32_t*)region->mapping.address+i)+(uint32_t)new_mem.address)|0x3;
+      }
+    }
+    /* Free old mapping, which must have been present if we got here */
+    page_free(&old_mapping);
+    //page_free(&new_mem);
+  }
 
   region->new_address = (uintptr_t)new_mem.address;
   region->new_size = (uintptr_t)new_mem.size;
@@ -319,10 +340,19 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      call).  If not, then the segfault must have been triggered by some actual
      invalid memory access, so abort. */
   if( !get_code_region(&region, target) ){
-    printf("FATAL ERROR: 0x%x never encountered in mmap/mprotect!\n", target);
-    abort();
+#ifdef DEBUG
+    printf("WARNING: 0x%x is untracked, attempting lookup.\n", target);
+#endif
+    if( *((uint32_t*)target) & 0x3 ){
+      /* Set instruction pointer to masked target lookup */;
+      con->uc_mcontext.gregs[REG_EIP] =
+          (uintptr_t)(*((uint32_t*)target) & 0xfffffff0);
+      return;
+    }else{
+      printf("FATAL ERROR: 0x%x never encountered in mmap/mprotect!\n", target);
+      abort();
+    }
   }
-
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
   /* If region has not been rewritten yet, rewrite it. */
   if( !region->rewritten ){
