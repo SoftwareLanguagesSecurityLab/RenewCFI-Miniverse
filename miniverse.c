@@ -1,6 +1,7 @@
 #include "miniverse.h"
 #include <string.h>
 #include <sys/mman.h>
+#include <assert.h>
 
 #define DO_RET_LOOKUPS 1
 
@@ -408,7 +409,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         break;
       }
       gen_padding(code, insn, 5); 
-      check_target(code, insn); //TODO: Will this incorrectly align a call identified as jmp target?
+      check_target(code, insn);
       *(code->code+code->offset) = *(insn->bytes);
       //disp = code->mapping[insn->address+disp-code->base] - code->offset;
       //memcpy(code->code+code->offset+1, disp, 4);
@@ -543,18 +544,38 @@ void check_target(mv_code_t *code, ss_insn *insn){
   }
 #endif
   /*
-    Insert ONE extra nop if instruction is a target, so that all targets
-    start with 0x90, a requirement of the way we plan to deal with jump targets.
+    Insert ONE extra nop if instruction is not call, is a target, and there
+    isn't already a serviceable nop present at the start of the chunk, 
+    so that all targets start with 0x90, a requirement of the way we plan
+    to deal with jump targets.  Since call instructions are aligned to the
+    END of a chunk and calls that are also targets have a chunk to themselves,
+    we have plenty of nops already!
   */
   if( is_target ){
 #ifdef DEBUG
     printf("Generating reloc for target @ 0x%x (0x%x)\n", (uintptr_t)(code->code+code->offset), (uintptr_t)(code->offset|0x00000003));
 #endif
-    *(code->code+code->offset++) = 0x90;
-    /* Generate a relocation entry to patch the ORIGINAL text section at this target address */
-    /* Subtract 1 for 0x90 */
-    /* Set the bottom 2 bytes of offset, which will be masked off. */
-    gen_reloc(code, RELOC_IND, (code->offset-1)|0x00000003, insn->address);
+    /* At this point the offset had better be chunk-aligned for all non-call
+       instructions, and the start of a chunk with a call should be nop. */
+    if( insn->id != SS_INS_CALL ){
+      assert( (code->offset & ~code->mask) == 0 );
+    }else{
+      assert( code->code[code->offset & code->mask]==0x90 );
+      assert( (code->offset & ~code->mask) == (uintptr_t)code->chunk_size-5 );
+    }
+    /* If instruction is a target, not a call, and there is no nop already,
+       insert one nop */
+    if( insn->id != SS_INS_CALL &&
+        code->code[code->offset] != 0x90 ){
+      *(code->code+code->offset++) = 0x90;
+    }
+    /* Generate a relocation entry to patch the ORIGINAL text section at
+       this target address */
+    /* Subtract to get to chunk-aligned 0x90 */
+    /* Set the bottom 2 bits of offset, which will be masked off. */
+    gen_reloc(code, RELOC_IND,
+        (code->offset & code->mask)|0x00000003,
+        insn->address);
   }
 }
 
