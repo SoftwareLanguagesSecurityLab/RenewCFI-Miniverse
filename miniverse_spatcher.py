@@ -17,9 +17,10 @@ first_inst = re.compile('	[^.].*')
 # this is that we don't know how long an indirect call will be without
 # using knowledge about instruction encoding.  For now, do I just match
 # for a subset of instructions with known lengths and then align accordingly?
-# For now, I'm only matching 2-byte call instructions, allowing me to know
-# exactly how much padding I need.
-call_indirect = re.compile('	call	[*]?[%]...')
+# Pattern for 2-byte call instructions
+call_indirect = re.compile('\s+call\s+[*]?[%]...')
+# Pattern for 6-byte call instructions with 4-byte offset
+call_indirect_offset = re.compile('\s+call\s+\*.+\(%...\)')
 
 if __name__ == '__main__':
   if len(sys.argv) != 2:
@@ -52,6 +53,9 @@ if __name__ == '__main__':
       elif call_indirect.match(lines[i]):
         # We want the instruction after this indirect call to be 16-byte aligned
         out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
+      elif call_indirect_offset.match(lines[i]):
+        # We want the instruction after this indirect call to be 16-byte aligned
+        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
       else:
         # Copy all irrelevant lines without modification
         out_buf += '%s\n'%lines[i]

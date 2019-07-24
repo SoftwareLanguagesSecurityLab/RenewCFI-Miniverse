@@ -27,6 +27,9 @@ bool my_is_target(uintptr_t address, uint8_t *bytes){
   return false;
 }
 
+void* funcarr[] = {(void*)0x7000000,(void*)0x7000000};
+uintptr_t pointer_offset = 0;
+
 int main(int argc, char** argv){
 
 	/* Hooks are currently done with linker flags, not runtime functions */
@@ -52,6 +55,37 @@ int main(int argc, char** argv){
 	// after this call is aligned!
         uint32_t res = ((uint32_t (*)())code_buffer)();
         printf("Result: %d Expected: 4\n", res );
+	// It turned out that putting the function pointer in an array
+	// and calling it that way didn't end up generating a different kind
+        // of call instruction.  I ended up resorting to hand-written assembly
+	// to mimic the kind of instructions I am encountering.
+	// Therefore, here I have inline assembly that calls the first entry in
+	// funcarr by using its offset from the GOT.  This produces a longer
+	// call instruction than a simple "call [eax]" instruction.
+	// Offset of zero
+	//void* ptr = (void*)((uint8_t*)funcarr);
+	asm( //"movl %0, %%edx;"
+	     "call piclabel\npiclabel:\n\t"
+	     "pop %%eax\n\t"
+	     "addl $_GLOBAL_OFFSET_TABLE_,%%eax\n\t"
+	     "inc %%eax\n\t"
+	     "call *funcarr@GOTOFF(%%eax)\n\t"
+	     "mov %%eax, %0"
+	     : "=r"(res)  /* output */
+	     : /* input */
+	     : "%eax", "%ecx", "%edx" /* clobbered */
+	);
+        printf("Result: %d Expected: 4\n", res );
+	// Offset of 4 (one pointer over)
+	/*void* ptr = (void*)((uint8_t*)funcarr-0x100);
+	asm( //"movl %0, %%edx;"
+	     "call *0x104(%1)\n\t"
+	     "mov %%eax, %0"
+	     : "=r"(res)  // output
+	     : "r"(ptr) // input
+	     : "%eax", "%ecx", "%edx" //
+	);
+        printf("Result: %d Expected: 4\n", res );*/
 
 	return 0;
 

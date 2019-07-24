@@ -212,16 +212,32 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
   }else if( (prot & PROT_WRITE) && get_code_region(&region,(uintptr_t)addr) ){
 #ifdef DEBUG
     printf("Detected present region 0x%x (mprotect addr 0x%x) -> writable!\n", region->address, (uintptr_t)addr);
-    printf("Copying from %x to %x, %x bytes!\n", (uintptr_t)((uintptr_t)region->backup.address+(addr-region->address)), (uintptr_t)addr, len);
+    printf("Copying from %x to %x, %x bytes!\n", (uintptr_t)((uintptr_t)region->backup.address+(addr-region->address)), (uintptr_t)addr, region->backup.size);
 #endif
     /* If the code is being set to writable but not executable,
        AND if the address is in an existing region,
        restore original bytes to the region before program can write to it */
     int result = __real_mprotect(addr,len,prot); /* Set writable first */
     /* Restore the bytes for full region or whichever sub-region has been
-       set writable; after this sub-region is set back to executable it
-       will be split into a separate region when we attempt to rewrite it. */
-    memcpy(addr,(void*)((uintptr_t)region->backup.address+(addr-region->address)),len);
+       set writable.  Choose the smaller of either the backup size or the
+       length of the mprotected region, as we cannot write to addresses not
+       set to writable, and it's possible for a sub-region to be set writable
+       (in which we must copy using len so we don't copy beyond the writable
+       region) or a new, larger region to be set writable (in which we must
+       copy using backup size, as we only have as much to copy as is in the
+       backup).
+       After this sub-region is set back to executable it
+       will be split into a separate region or expanded when we attempt to
+       rewrite it. */
+    if( region->backup.size < len ){
+      memcpy(addr,
+             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
+             region->backup.size);
+    }else{
+      memcpy(addr,
+             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
+             len);
+    }
     return result;
   }
   return __real_mprotect(addr,len,prot);
@@ -258,9 +274,7 @@ void rewrite_region(code_region_t* region){
 #ifdef DEBUG
     printf("Free old backup: 0x%x, len 0x%x\n", (uintptr_t)region->backup.address, region->backup.size);
 #endif
-    backup_mem.address = region->backup.address;
-    backup_mem.size = region->backup.size;
-    page_free(&backup_mem);
+    page_free(&region->backup);
   }
   /* Backup original bytes before rewriting and patching old code section */
   page_alloc(&backup_mem, code_size);
