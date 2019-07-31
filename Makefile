@@ -23,6 +23,9 @@ test: all
 	$(CC) -m32 -g driver10.c -S -o driver10.s
 	python miniverse_spatcher.py driver10.s
 	$(CC) -m32 -g driver10.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver10
+	$(CC) -m32 -g driver11.c -S -o driver11.s
+	python miniverse_spatcher.py driver11.s
+	$(CC) -m32 -g driver11.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver11
 
 install: all
 	cp miniverse.h /usr/local/include/miniverse.h

@@ -465,11 +465,14 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
   */  
   /* This code does not fit cleanly into a single chunk, 
      so we need to split it into two pieces */
-  if( insn->size == 3 ){
-    gen_padding(code, insn, 10);
-  }else{
-    gen_padding(code, insn, 9);
-  }
+  /* While this padding is going to be excessive because it will notice the
+     instruction is a CALL and will pad to the end of a chunk (there is
+     no need to pad that much here because the second call to gen_padding
+     further down is the one that requires padding to the end of a chunk),
+     I think there's no harm in padding this way, as each half of this
+     inserted code must be in two separate chunks anyway, and whether the code
+     is at the start or end of a chunk shouldn't matter. */
+  gen_padding(code, insn, 7+insn->size);
   check_target(code, insn);
   *(code->code+code->offset++) = indirect_template_before[0];
   *(code->code+code->offset++) = indirect_template_before[1];
@@ -477,9 +480,10 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
      we can simply mask it off specifically because our target is eax,
      which is equivalent to /0 */
   *(code->code+code->offset++) = insn->bytes[1] & 0xC7;
-  /* If instruction has a SIB byte, copy it over as well. */
-  if( insn->size == 3 ){
-    *(code->code+code->offset++) = insn->bytes[2];
+  /* If instruction has a SIB byte or displacement, copy those over as well. */
+  if( insn->size >= 3 ){
+    memcpy( code->code+code->offset, insn->bytes+2, insn->size-2 );
+    code->offset += insn->size-2;
   }
   memcpy( code->code+code->offset, indirect_template_after, 6);
   code->offset += 6;
@@ -561,7 +565,11 @@ void check_target(mv_code_t *code, ss_insn *insn){
       assert( (code->offset & ~code->mask) == 0 );
     }else{
       assert( code->code[code->offset & code->mask]==0x90 );
-      assert( (code->offset & ~code->mask) == (uintptr_t)code->chunk_size-5 );
+      // Cannot perform this assertion without knowing the true length of the
+      // rewritten instruction, which is not passed to this function.  This
+      // assertion fails because if the call instruction is an INDIRECT call,
+      // the length differs wildly from the 5 bytes of a simple direct call.
+      //assert( (code->offset & ~code->mask) == (uintptr_t)code->chunk_size-5 );
     }
     /* If instruction is a target, not a call, and there is no nop already,
        insert one nop */
