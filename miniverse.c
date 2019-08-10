@@ -71,6 +71,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn);
 void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size);
 void check_target(mv_code_t *code, ss_insn *insn);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target);
+size_t sort_relocs(mv_code_t *code);
 
 pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
     uintptr_t *new_address, size_t *new_size, uint8_t chunk_size,
@@ -148,10 +149,11 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   /* Assume original text section has been set to writable by caller */
   //mprotect((void*)address, code.orig_size, PROT_READ|PROT_WRITE);
  
+  sort_relocs(&code);
   //printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
   // Loop through relocations and patch target destinations
   for( r = 0; r < code.reloc_count; r++ ){
-    rel = *(code.relocs+r);
+    rel = code.relocs[r];
     if( rel.type == RELOC_OFF ){
       /* If target is in mapping, update entry.  Otherwise, we probably want to
          somehow check if this target is a valid target in a separate module.
@@ -172,7 +174,17 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
       /* Unlike for RELOC_OFF type, we write directly to the target, placing the new base address
          plus the offset directly at that address in the original text section */  
       //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
-      if( rel.target <= (uintptr_t)code.base+code.orig_size-4 ){
+      if( r != code.reloc_count-1 && code.relocs[r+1].target - rel.target < 4 ){
+        printf("WARNING: Target overlaps with another target\n");
+        /* Patch first byte to force indicator that is is NOT a target
+           by replacing first byte with a nop */
+        /* TODO: Patching with a nop does not work because the target is always
+           masked off regardless of whether it is a target or not.  This means
+           that the original target will be lost and the masked address will
+           become an invalid target, resulting in a crash.  This approach does
+           not work in its current implementation. */
+        *(uint8_t*)(rel.target) = 0x90;
+      }else if( rel.target <= (uintptr_t)code.base+code.orig_size-4 ){
         *(uint32_t*)(rel.target) = (uintptr_t)code.code + rel.offset;
       }else{
         printf("WARNING: Target too close to code boundary\n");
@@ -594,6 +606,41 @@ void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target)
   reloc->offset = offset;
   reloc->target = target;
   code->reloc_count++;
+}
+
+/* Sorts RELOC_IND relocations, and moves all RELOC_OFF relocations to the
+   front of the list of relocs without sorting them.
+   Call this after all relocs have been generated to allow relocs in trimmed
+   code to be removed correctly.  Returns the index of the first
+   RELOC_IND reloc.
+*/
+size_t sort_relocs(mv_code_t *code){
+  size_t i,j,first_ind;
+  uintptr_t mintarget;
+  mv_reloc_t rtemp;
+  first_ind = 0;
+  for( i = 0; i < code->reloc_count; i++ ){
+    /* Don't sort RELOC_OFF entries, but put them before all other entries */
+    if( code->relocs[i].type == RELOC_OFF ){
+      rtemp = code->relocs[i];
+      code->relocs[i] = code->relocs[first_ind];
+      code->relocs[first_ind] = rtemp;
+      first_ind++;
+    }
+  }
+  /* Sort other entries */
+  for( i = first_ind; i < code->reloc_count-1; i++ ){
+    mintarget = i;
+    for( j = i+1; j < code->reloc_count; j++){
+      if( code->relocs[j].target < code->relocs[mintarget].target ){
+        mintarget = j;
+      }
+    }
+    rtemp = code->relocs[i];
+    code->relocs[i] = code->relocs[mintarget];
+    code->relocs[mintarget] = rtemp;
+  }
+  return first_ind;
 }
 
 /* Hardcoded special case to handle get_pc_thunk.  This will not work for arbitrary PIC, but
