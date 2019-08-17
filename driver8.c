@@ -39,7 +39,7 @@ uint32_t __attribute__((aligned(16))) code_caller(uintptr_t addr, int arg){
   __asm__ volatile("nop");
   __asm__ volatile("nop");
   ((uint32_t (*)(uint32_t))addr)(arg);
-  __asm__ volatile("nop");
+  __asm__ volatile("fwait"); /* TODO MASK: Restore original masking code */
 }
 
 int main(int argc, char** argv){

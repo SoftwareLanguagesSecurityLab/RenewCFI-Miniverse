@@ -14,6 +14,10 @@
 #define CALL_JMP_INDIRECT 0xff
 #define JCC_REL_NEAR 0x0f
 
+/* Use this to identify targets */
+/* TODO MASK: Restore original masking code */
+#define TARGET_LABEL 0x9b
+
 #define RELOC_INVALID 0
 #define RELOC_OFF 1
 #define RELOC_IND 2
@@ -54,12 +58,24 @@ typedef struct mv_code_t{
 #endif
 } mv_code_t;
 
-uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
-uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
+/* TODO MASK: Restore original masking code */
+uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00";
+//uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
+/* TODO MASK: Restore original masking code */
+uint8_t ret_template_mask[] = "\x83\xe0\xff\x87\x04\x24";
+//uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
 uint8_t indirect_template_before[] = "\x50\x8b";
-uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
-uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
-uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x64\x24\xf8";
+/* TODO MASK: Restore original masking code */
+uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x44\x00";
+//uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
+/* TODO MASK: Restore original masking code */
+/* TODO: Why is the AND in long form if there's a shorter form available? */
+uint8_t indirect_template_mask_call[] = "\x25\xff\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
+//uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
+/* TODO MASK: Restore original masking code */
+/* TODO: Why is the AND in long form if there's a shorter form available? */
+uint8_t indirect_template_mask_jmp[] = "\x25\xff\xff\xff\xff\x50\x58\x58\xff\x64\x24\xf8";
+//uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x64\x24\xf8";
 
 bool is_pic(mv_code_t *code, uintptr_t address);
 
@@ -87,6 +103,8 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   size_t trimmed_bytes = 0; // This variable is optional, as it's just used to collect a metric.
   code.offset = 0;
   code.last_safe_offset = 0;
+  /* TODO MASK: Restore original masking code */
+  //code.mask = -1;
   code.mask = -1 ^ (chunk_size-1); // TODO: Mask off top bits in future
   code.base = address;
   page_alloc( &mapping_mem, sizeof(uint32_t) * bytes_size );
@@ -175,7 +193,9 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
          plus the offset directly at that address in the original text section */  
       //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
       if( r != code.reloc_count-1 && code.relocs[r+1].target - rel.target < 4 ){
+#ifdef DEBUG
         printf("WARNING: Target overlaps with another target\n");
+#endif
         /* Patch first byte to force indicator that is is NOT a target
            by replacing first byte with a nop */
         /* TODO: Patching with a nop does not work because the target is always
@@ -183,7 +203,12 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
            that the original target will be lost and the masked address will
            become an invalid target, resulting in a crash.  This approach does
            not work in its current implementation. */
-        *(uint8_t*)(rel.target) = 0x90;
+        /* TODO: Patching with an alternate label, 0x9b (fwait), can work, but
+           only if masking of targets is not done, meaning that SFI is not
+           being enforced at all.  This will result in easier testing for a
+           proof-of-concept, but not an effective solution for an actual
+           defense. */
+        *(uint8_t*)(rel.target) = TARGET_LABEL;
       }else if( rel.target <= (uintptr_t)code.base+code.orig_size-4 ){
         *(uint32_t*)(rel.target) = (uintptr_t)code.code + rel.offset;
       }else{
@@ -542,7 +567,6 @@ void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
   }
   /* If we have a nonzero chunk size, then we need to ensure all call
      instructions are padded to right before the end of a chunk.
-     TODO: Cover all variations of call instructions
   */
   if( code->chunk_size != 0 && (insn->id == SS_INS_CALL) &&
       ( (code->offset + new_size) % code->chunk_size != 0) ){
@@ -576,7 +600,9 @@ void check_target(mv_code_t *code, ss_insn *insn){
     if( insn->id != SS_INS_CALL ){
       assert( (code->offset & ~code->mask) == 0 );
     }else{
-      assert( code->code[code->offset & code->mask]==0x90 );
+      /* TODO MASK: Restore original masking code */
+      code->code[code->offset & code->mask] = TARGET_LABEL;
+      assert( code->code[code->offset & code->mask]==TARGET_LABEL );
       // Cannot perform this assertion without knowing the true length of the
       // rewritten instruction, which is not passed to this function.  This
       // assertion fails because if the call instruction is an INDIRECT call,
@@ -586,15 +612,16 @@ void check_target(mv_code_t *code, ss_insn *insn){
     /* If instruction is a target, not a call, and there is no nop already,
        insert one nop */
     if( insn->id != SS_INS_CALL &&
-        code->code[code->offset] != 0x90 ){
-      *(code->code+code->offset++) = 0x90;
+        code->code[code->offset] != TARGET_LABEL ){
+      *(code->code+code->offset++) = TARGET_LABEL;
     }
     /* Generate a relocation entry to patch the ORIGINAL text section at
        this target address */
     /* Subtract to get to chunk-aligned 0x90 */
     /* Set the bottom 2 bits of offset, which will be masked off. */
+    /* TODO MASK: Restore original masking code */
     gen_reloc(code, RELOC_IND,
-        (code->offset & code->mask)|0x00000003,
+        (code->offset & code->mask)/*|0x00000003*/,
         insn->address);
   }
 }
@@ -619,6 +646,9 @@ size_t sort_relocs(mv_code_t *code){
   uintptr_t mintarget;
   mv_reloc_t rtemp;
   first_ind = 0;
+  if( code->reloc_count == 0 ){
+    return 0;
+  }
   for( i = 0; i < code->reloc_count; i++ ){
     /* Don't sort RELOC_OFF entries, but put them before all other entries */
     if( code->relocs[i].type == RELOC_OFF ){
