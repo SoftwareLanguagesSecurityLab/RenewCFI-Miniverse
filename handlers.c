@@ -230,13 +230,27 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
        will be split into a separate region or expanded when we attempt to
        rewrite it. */
     if( region->backup.size < len ){
-      memcpy(addr,
+      /* Check whether we have enough space before the end of the region */
+      if( region->size-((uintptr_t)addr-region->address) > region->backup.size){
+        memcpy(addr,
              (void*)((uintptr_t)region->backup.address+(addr-region->address)),
-             region->backup.size);
+             region->backup.size );
+      }else{
+        memcpy(addr,
+             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
+             region->size - ((uintptr_t)addr-region->address) );
+      }
     }else{
-      memcpy(addr,
+      /* Check whether we have enough space before the end of the region */
+      if( region->size-((uintptr_t)addr-region->address) > len ){
+        memcpy(addr,
              (void*)((uintptr_t)region->backup.address+(addr-region->address)),
-             len);
+             len );
+      }else{
+        memcpy(addr,
+             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
+             region->size - ((uintptr_t)addr-region->address) );
+      }
     }
     return result;
   }

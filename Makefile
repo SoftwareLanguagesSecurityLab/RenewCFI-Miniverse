@@ -36,4 +36,4 @@ install: all
 	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -c $< -o $@
 
 clean:
-	rm -f driver *.gch *.a *.o
+	rm -f driver *.gch *.a *.o *.s
