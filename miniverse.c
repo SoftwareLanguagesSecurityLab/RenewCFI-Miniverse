@@ -4,6 +4,7 @@
 #include <assert.h>
 
 #define DO_RET_LOOKUPS 1
+#define PUSH_OLD_ADDRESSES 1
 
 #define NOP 0x90
 #define RET_NEAR 0xc3
@@ -61,13 +62,25 @@ typedef struct mv_code_t{
 /* TODO MASK: Restore original masking code */
 uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00";
 //uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
+#ifdef PUSH_OLD_ADDRESSES
+uint8_t pop_jmp_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00\x87\x04\x24\x83\xc4\x04";
+uint8_t pop_jmp_imm_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00";
+uint8_t pop_jmp_imm_template2[] = "\x87\x04\x24\x81\xc4\xff\xff\x00\x00";
+#endif
 /* TODO MASK: Restore original masking code */
 uint8_t ret_template_mask[] = "\x83\xe0\xff\x87\x04\x24";
 //uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
+#ifdef PUSH_OLD_ADDRESSES
+uint8_t pop_jmp_template_mask[] = "\x80\x64\x24\xfc\xff\xff\x64\x24\xfc";
+uint8_t pop_jmp_imm_template_mask[] = "\x80\xa4\x24\xff\xff\xff\xff\xff\xff\xa4\x24\xff\xff\xff\xff";
+#endif
 uint8_t indirect_template_before[] = "\x50\x8b";
 /* TODO MASK: Restore original masking code */
 uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x44\x00";
 //uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
+#ifdef PUSH_OLD_ADDRESSES
+uint8_t indirect_template_mask_push_jmp[] = "\x24\xff\x50\x58\x58\x68\xff\xff\xff\xff\xff\x64\x24\xfc";
+#endif
 /* TODO MASK: Restore original masking code */
 /* TODO: Why is the AND in long form if there's a shorter form available? */
 uint8_t indirect_template_mask_call[] = "\x25\xff\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
@@ -194,7 +207,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
       //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
       if( r != code.reloc_count-1 && code.relocs[r+1].target - rel.target < 4 ){
 #ifdef DEBUG
-        printf("WARNING: Target overlaps with another target\n");
+        printf("WARNING: Target %x overlaps with another target\n", rel.target);
 #endif
         /* Patch first byte to force indicator that is is NOT a target
            by replacing first byte with a nop */
@@ -312,7 +325,6 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
 
 #ifdef DO_RET_LOOKUPS
 inline void gen_ret(mv_code_t *code, ss_insn *insn){
-  size_t ret_size = 1;
   //printf("RET: %llx %s\n", insn->address, insn->insn_str);
   /* Rewrite ret instructions to perform lookups just like indirect
      jmp and call instructions, in case the return address is an old
@@ -328,6 +340,69 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     xchg eax,[esp]
     ret <imm?>
   */
+  /* If PUSH_OLD_ADDRESSES is set, I use these instructions instead,
+     so that this becomes essentially a pop-jump pair.
+    xchg eax,[esp]
+    test byte ptr [eax], 0x3
+    cmov(n)z eax,[eax]
+    xchg [esp],eax
+    add esp,4
+    ---                      (chunk boundary)
+    and byte ptr [esp-4],0xf0 (0xff)    
+    jmp [esp-4]
+
+     Since it's possible for returns to have a form that adds an immediate to
+     the stack pointer, I need a more complicated form:
+    xchg eax,[esp]
+    test byte ptr [eax], 0x3
+    cmov(n)z eax, [eax]
+    ---                      (chunk boundary)
+    xchg [esp],eax
+    add esp,0xffff <-replace this with 16-bit offset from return
+    ---                      (chunk boundary)
+    and byte [esp-0xffff], 0xf0 (0xff) <-replace 0xffff w/ 16-bit offs from ret
+    jmp dword [esp-0xffff] <-replace 0xffff with 16-bit offset from return
+
+
+  */ 
+#ifdef PUSH_OLD_ADDRESSES
+  if( *(insn->bytes) != RET_NEAR_IMM ){
+    /* Conditionally load mapping entry */
+    gen_padding(code,insn,sizeof(pop_jmp_template)-1);
+    check_target(code,insn);
+    memcpy(code->code+code->offset, pop_jmp_template,
+        sizeof(pop_jmp_template)-1);
+    code->offset += sizeof(pop_jmp_template)-1;
+
+    /* Mask address regardless of source (in new chunk) */
+    gen_padding(code,insn,sizeof(pop_jmp_template_mask)-1);
+    memcpy(code->code+code->offset, pop_jmp_template_mask,
+        sizeof(pop_jmp_template_mask)-1);
+    code->offset += sizeof(pop_jmp_template_mask)-1;
+  }else{
+    /* Conditionally load mapping entry */
+    gen_padding(code,insn,sizeof(pop_jmp_imm_template)-1);
+    check_target(code,insn);
+    memcpy(code->code+code->offset, pop_jmp_imm_template,
+        sizeof(pop_jmp_imm_template)-1);
+    code->offset += sizeof(pop_jmp_imm_template)-1;
+    
+    /* Adjust stack pointer */
+    gen_padding(code,insn,sizeof(pop_jmp_imm_template2)-1);
+    memcpy(code->code+code->offset, pop_jmp_imm_template2,
+        sizeof(pop_jmp_imm_template2)-1);
+    code->offset += sizeof(pop_jmp_imm_template2)-1;
+    
+    /* Mask address regardless of source (in new chunk) */
+    gen_padding(code,insn,sizeof(pop_jmp_imm_template_mask)-1);
+    memcpy(code->code+code->offset, pop_jmp_imm_template_mask,
+        sizeof(pop_jmp_imm_template_mask)-1);
+    code->offset += sizeof(pop_jmp_imm_template_mask)-1;
+
+    /* TODO: patch instructions */
+  }
+#else
+  size_t ret_size = 1;
   if( *(insn->bytes) == RET_NEAR_IMM ){
     ret_size = 3;
   }
@@ -346,7 +421,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
   /* copy return instruction over */
   memcpy( code->code+code->offset, insn->bytes, ret_size);
   code->offset += ret_size;
-
+#endif
   code->last_safe_offset = code->offset;
   code->last_safe_reloc = code->reloc_count;
 }
@@ -427,22 +502,40 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
     case CALL_REL_NEAR:
       /* Retrieve jmp target offset and add to relocation table */
       disp = *(int32_t*)(insn->bytes+1);
-      /* Special case code for call to PIC, specifically the get_pc_thunk pattern.
-         If call to PIC, we need to push original ret address to pass to thunk, then
-         after thunk returns, move stack back to where it was before */
+      /* Special case code for call to PIC, specifically the get_pc_thunk
+         pattern. If call to PIC, we need to push original ret address to
+         pass to thunk, then after thunk returns, move stack back to where
+         it was before */
+      /* If PUSH_OLD_ADDRESSES is defined, we don't need special case handling
+         for pic because we are ALWAYS pushing the old address.  Pic code should
+         work by default in that case. */
+#ifdef PUSH_OLD_ADDRESSES
+      if( *(insn->bytes) == CALL_REL_NEAR ){
+#else
       if( is_pic(code, insn->address + insn->size + disp) && *(insn->bytes) == CALL_REL_NEAR ){
-        /* Accommodate extra 5 bytes from push, but since this is a call, do not include
-           bytes from add; the padding will align the call to the end of a chunk, so the add
+#endif
+        /* Accommodate extra 5 bytes from push, but since this is a call, do
+           not include bytes from add; the padding will align the call to the
+           end of a chunk, so the add
            will be safely at the start of the next chunk */
         gen_padding(code, insn, 10); 
+        check_target(code, insn);
         *(code->code+code->offset) = 0x68; // push imm32
         *(uint32_t*)(code->code+code->offset+1) = insn->address + insn->size; // return address
+#ifdef PUSH_OLD_ADDRESSES
+        *(code->code+code->offset+5) = 0xe9; // jmp instead of call
+        gen_reloc(code, RELOC_OFF, code->offset+6, insn->address+5+disp);
+        code->offset += 10; // length of push + call
+#else
+        /* This makes assumptions that PIC code is following the conventions of
+           get_pc_thunk and is unsuitable for general use */
         *(code->code+code->offset+5) = *(insn->bytes); // original call
         *(code->code+code->offset+10) = 0x83; // add
         *(code->code+code->offset+11) = 0xc4; // esp,
         *(code->code+code->offset+12) = 0x04; // 4
         gen_reloc(code, RELOC_OFF, code->offset+6, insn->address+5+disp);
         code->offset += 13; // length of push + call + add esp,4
+#endif
         break;
       }
       gen_padding(code, insn, 5); 
@@ -494,11 +587,14 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     cmovnz eax, [eax]
     ---
     ;and eax, 0x3FFFFFE0
-    and eax, 0xFFFFFFF0
+    and eax, 0xFFFFFFF0   (and al, 0xFF for PUSH_OLD_ADDRESSES + TODO MASK )
     mov [esp-4],eax
       OR push eax, pop eax
     pop eax
     call/jmp [esp-8] 
+      OR (if PUSH_OLD_ADDRESSES is defined):
+        push <old return address>
+        jmp [esp-4]
   */  
   /* This code does not fit cleanly into a single chunk, 
      so we need to split it into two pieces */
@@ -526,6 +622,19 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
   code->offset += 6;
   
   /* Second half */ 
+#ifdef PUSH_OLD_ADDRESSES
+  if( insn->id == SS_INS_CALL ){
+    gen_padding(code, insn, 14);
+    memcpy( code->code+code->offset, indirect_template_mask_push_jmp, 14);
+    /* Patch template with return address from old code */
+    *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
+    code->offset += 14;
+  }else{
+    gen_padding(code, insn, 12);
+    memcpy( code->code+code->offset, indirect_template_mask_jmp, 12);
+    code->offset += 12;
+  }
+#else
   gen_padding(code, insn, 12);
   if( insn->id == SS_INS_CALL ){
     memcpy( code->code+code->offset, indirect_template_mask_call, 12);
@@ -533,6 +642,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     memcpy( code->code+code->offset, indirect_template_mask_jmp, 12);
   }
   code->offset += 12;
+#endif
 
   /* Generate a relocation entry to patch the ORIGINAL text section */
   /*gen_reloc(code, RELOC_IND, saved_off, insn->address);*/
