@@ -7,14 +7,9 @@ all: miniverse.o handlers.o
 	nasm -f bin -l entry.lst entry.asm
 
 test: all
-	#$(CC) -m32 -g driver.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver
-	#$(CC) -m32 -g driver2.c libminiverse.a -Ltests/ -ltest /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver2
-	#$(CC) -m32 -g driver3.c handlers.c libminiverse.a -Ltests/ -ltest /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver3
-	#$(CC) -m32 -g driver4.c inittester.c -Ltests/ -ltest -o driver4
 	$(CC) -m32 -g driver5.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver5
 	# No hooking version (to test without rewriting anything)
 	#$(CC) -m32 -g driver5.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver5
-	$(CC) -m32 -g driver6.c inittester.c -o driver6
 	$(CC) -m32 -g driver7.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver7
 	$(CC) -m32 -g driver8.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver8
 	$(CC) -m32 -g driver9.c -S -o driver9.s
@@ -39,4 +34,4 @@ install: all
 	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -c $< -o $@
 
 clean:
-	rm -f driver *.gch *.a *.o *.s
+	rm -f libminiversebin libminiverseflat binminiverseentry *.gch *.a *.o *.s
