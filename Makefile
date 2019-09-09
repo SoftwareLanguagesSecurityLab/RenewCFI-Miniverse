@@ -26,6 +26,9 @@ test: all
 	$(CC) -m32 -g driver11.c -S -o driver11.s
 	python miniverse_spatcher.py driver11.s
 	$(CC) -m32 -g driver11.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver11
+	$(CC) -m32 -g driver-old-addr.c -S -o driver-old-addr.s
+	python miniverse_spatcher.py driver-old-addr.s
+	$(CC) -m32 -g driver-old-addr.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver-old-addr
 
 install: all
 	cp miniverse.h /usr/local/include/miniverse.h
