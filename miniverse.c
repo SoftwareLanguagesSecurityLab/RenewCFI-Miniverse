@@ -360,8 +360,8 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     xchg [esp],eax
     add esp,0xffff <-replace this with 16-bit offset from return
     ---                      (chunk boundary)
-    and byte [esp-0xffff], 0xf0 (0xff) <-replace 0xffff w/ 16-bit offs from ret
-    jmp dword [esp-0xffff] <-replace 0xffff with 16-bit offset from return
+    and byte ptr [esp-0xffff], 0xf0 (0xff) <-replace 0xffff w/ offs from ret
+    jmp dword ptr [esp-0xffff] <-replace 0xffff with 16-bit offset from ret
 
 
   */ 
@@ -391,15 +391,32 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     gen_padding(code,insn,sizeof(pop_jmp_imm_template2)-1);
     memcpy(code->code+code->offset, pop_jmp_imm_template2,
         sizeof(pop_jmp_imm_template2)-1);
+    /* Patch add instr with immediate value from ret <imm> */
+    /* We need to add 4 to the immediate to include the additional 4 bytes
+       that would have been added to $esp by ret for the return address.
+       TODO: In theory adding 4 to the immediate could cause the immediate to
+       overflow if it is almost 65535.  This edge case is not handled here. */
+    /* We do not need to worry about the upper bits at all because ret <imm>
+       appears to interpret the immediate as unsigned, so we can always leave
+       the upper bits zero */
+    *(uint16_t*)(code->code+code->offset+5) = 4 + *(uint16_t*)(insn->bytes+1);
     code->offset += sizeof(pop_jmp_imm_template2)-1;
     
     /* Mask address regardless of source (in new chunk) */
     gen_padding(code,insn,sizeof(pop_jmp_imm_template_mask)-1);
     memcpy(code->code+code->offset, pop_jmp_imm_template_mask,
         sizeof(pop_jmp_imm_template_mask)-1);
+    /* Patch and instr and jmp instr with immediate value from ret <imm> */
+    /* We need to add 4 to the immediate to include the additional 4 bytes
+       that would have been added to $esp by ret for the return address.
+       TODO: In theory adding 4 to the immediate could cause the immediate to
+       overflow if it is almost 65535.  This edge case is not handled here. */
+    /* Since both of these are SUBTRACTING from $esp, we need to get the
+       2's complement of the immediate, and the upper bits will always be
+       set. */
+    *(uint16_t*)(code->code+code->offset+3) = -(4+*(uint16_t*)(insn->bytes+1));
+    *(uint16_t*)(code->code+code->offset+11) = -(4+*(uint16_t*)(insn->bytes+1));
     code->offset += sizeof(pop_jmp_imm_template_mask)-1;
-
-    /* TODO: patch instructions */
   }
 #else
   size_t ret_size = 1;
