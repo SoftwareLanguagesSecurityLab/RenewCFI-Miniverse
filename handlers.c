@@ -322,8 +322,10 @@ void rewrite_region(code_region_t* region){
         /* Patch in address at target in old rewritten code with the true
            destination in the new rewritten code, which we REALLY HOPE is also
            aligned.  OR with 0x3 to indicate a valid entry, will be masked */
+	/* TODO MASK: Add back OR with 0x3 */
         *((uint32_t*)region->new_address+offset/4) = \
-            (*((uint32_t*)region->mapping.address+i)+(uint32_t)new_mem.address)|0x3;
+            (*((uint32_t*)region->mapping.address+i)+(uint32_t)new_mem.address);
+            //(*((uint32_t*)region->mapping.address+i)+(uint32_t)new_mem.address)|0x3;
       }
     }
     /* Free old mapping, which must have been present if we got here */
@@ -371,15 +373,26 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
 #ifdef DEBUG
     printf("WARNING: 0x%x is untracked, attempting lookup.\n", target);
 #endif
-    if( *((uint32_t*)target) & 0x3 ){
+    /* TODO MASK: The test checking whether this is a target previously failed
+       or else it would have already looked up a target that should have worked,
+       so it's really confusing as to why I would perform a lookup here.
+       We perform this lookup when NO code region matches, so we're doing a
+       lookup on a target that we have no idea of the origin of!  In what case
+       does looking up an unidentified target make sense?
+       Unless I find evidence otherwise, I'm commenting out this fallback
+       because I don't think it accomplishes anything. */
+    //if( (*((uint32_t*)target) & 0x3) ){
+    //if( *((uint32_t*)target) & 0x3 ){
       /* Set instruction pointer to masked target lookup */;
-      con->uc_mcontext.gregs[REG_EIP] =
-          (uintptr_t)(*((uint32_t*)target) & 0xfffffff0);
-      return;
-    }else{
+    //  con->uc_mcontext.gregs[REG_EIP] =
+          /* TODO MASK: Restore proper mask */
+    //      (uintptr_t)(*((uint32_t*)target) & 0xffffffff);
+          //(uintptr_t)(*((uint32_t*)target) & 0xfffffff0);
+    //  return;
+    //}else{
       printf("FATAL ERROR: 0x%x never encountered in mmap/mprotect!\n", target);
       abort();
-    }
+    //}
   }
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
   /* If region has not been rewritten yet, rewrite it. */
