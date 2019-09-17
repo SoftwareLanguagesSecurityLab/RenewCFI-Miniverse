@@ -21,6 +21,15 @@
 #include <stdint.h>
 #include <ucontext.h>
 #include <sys/ucontext.h> // For hardware-specific registers (TODO: Does not work as expected!)
+#include <unistd.h>
+
+#define FIXED_OFFSET 0x40000000
+
+void *__real_mmap(void *addr, size_t length, int prot, int flags,
+                  int fd, off_t offset);
+
+int __real_mprotect(void *addr, size_t len, int prot);
+
 
 bool default_is_target(uintptr_t address, uint8_t *bytes){
   /* Suppress unused parameter warnings */
@@ -57,6 +66,11 @@ void add_code_region(uintptr_t address, size_t size){
     /* TODO: flexibly allocate more pages as needed.  For now, ASSUME we only
        need one page to hold data on all code regions */
     page_alloc(&code_regions_mem, 0x1000);
+    /* Create huge memory buffer for lookup entries at a fixed offset
+       TODO: Eventually change this from a hard-coded offset into memory
+       somehow allocated in a mysterious region based on segment registers */
+    __real_mmap((void*)(address+FIXED_OFFSET),0x1000000,PROT_WRITE|PROT_READ,
+        MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
 #ifdef DEBUG
     printf("Allocated code regions at 0x%x\n", (uintptr_t)code_regions_mem.address);
 #endif
@@ -122,13 +136,31 @@ bool get_code_region(code_region_t** region, uintptr_t address){
   return false;
 }
 
-void *__real_mmap(void *addr, size_t length, int prot, int flags,
-                  int fd, off_t offset);
-
-int __real_mprotect(void *addr, size_t len, int prot);
+void mirror_code_segments(){
+  char line[256];
+  uintptr_t region_start,region_end;
+  FILE* f = fopen("/proc/self/maps", "r");
+  while( !feof( f ) ){
+    fgets(line, 256, f);
+    /* If region is executable, character at this index is 'x' */
+    if( line[20] == 'x' ){
+      /* Extract region start and end addresses, and map a memory
+         region at a fixed offset that corresponds to the code.  Then
+         copy the memory contents over */
+      region_start = strtol(line, NULL,16);
+      region_end = strtol(line+9,NULL,16);
+      __real_mmap((void*)(region_start+FIXED_OFFSET),region_end-region_start,
+          PROT_WRITE|PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
+      memcpy((void*)(region_start+FIXED_OFFSET),(void*)region_start,
+          region_end-region_start);
+    }
+  }
+  fclose(f);
+}
 
 void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes)){
   struct sigaction new_action, old_action;
+  mirror_code_segments();
   if( my_is_target != NULL ){
     is_target = my_is_target;
   }
@@ -391,7 +423,9 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
     //  return;
     //}else{
       printf("FATAL ERROR: 0x%x never encountered in mmap/mprotect!\n", target);
-      abort();
+      /* Exit as soon as possible, don't bother with abort because it raises
+         a catchable SIGABRT signal */
+      _exit(EXIT_FAILURE);
     //}
   }
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);

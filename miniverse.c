@@ -19,6 +19,8 @@
 /* TODO MASK: Restore original masking code */
 #define TARGET_LABEL 0x9b
 
+#define FIXED_OFFSET 0x40000000
+
 #define RELOC_INVALID 0
 #define RELOC_OFF 1
 #define RELOC_IND 2
@@ -63,20 +65,22 @@ typedef struct mv_code_t{
 uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00";
 //uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
 #ifdef PUSH_OLD_ADDRESSES
-uint8_t pop_jmp_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00\x87\x04\x24\x83\xc4\x04";
-uint8_t pop_jmp_imm_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00";
-uint8_t pop_jmp_imm_template2[] = "\x87\x04\x24\x81\xc4\xff\xff\x00\x00";
+uint8_t pop_jmp_template[] = "\x87\x04\x24\xf6\x80\x00\x00\x00\x40\x03";
+/* Only here because adding a fixed offset forces me to split this */
+uint8_t pop_jmp_template2[] = "\x0f\x44\x80\x00\x00\x00\x40";
+uint8_t pop_jmp_imm_template[] = "\x87\x04\x24\xf6\x80\x00\x00\x00\x40\x03";
+uint8_t pop_jmp_imm_template2[] = "\x0f\x44\x80\x00\x00\x00\x40\x87\x04\x24\x81\xc4\xff\xff\x00\x00";
 #endif
 /* TODO MASK: Restore original masking code */
 uint8_t ret_template_mask[] = "\x83\xe0\xff\x87\x04\x24";
 //uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
 #ifdef PUSH_OLD_ADDRESSES
-uint8_t pop_jmp_template_mask[] = "\x80\x64\x24\xfc\xff\xff\x64\x24\xfc";
+uint8_t pop_jmp_template_mask[] = "\x87\x04\x24\x83\xc4\x04\x80\x64\x24\xfc\xff\xff\x64\x24\xfc";
 uint8_t pop_jmp_imm_template_mask[] = "\x80\xa4\x24\xff\xff\xff\xff\xff\xff\xa4\x24\xff\xff\xff\xff";
 #endif
 uint8_t indirect_template_before[] = "\x50\x8b";
 /* TODO MASK: Restore original masking code */
-uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x44\x00";
+uint8_t indirect_template_after[] = "\xf6\x80\x00\x00\x00\x40\x03\x0f\x44\x80\x00\x00\x00\x40";
 //uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
 #ifdef PUSH_OLD_ADDRESSES
 uint8_t indirect_template_mask_push_jmp[] = "\x24\xff\x50\x58\x58\x68\xff\xff\xff\xff\xff\x64\x24\xfc";
@@ -221,9 +225,9 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
            being enforced at all.  This will result in easier testing for a
            proof-of-concept, but not an effective solution for an actual
            defense. */
-        *(uint8_t*)(rel.target) = TARGET_LABEL;
+        *(uint8_t*)(rel.target+FIXED_OFFSET) = TARGET_LABEL;
       }else if( rel.target <= (uintptr_t)code.base+code.orig_size-4 ){
-        *(uint32_t*)(rel.target) = (uintptr_t)code.code + rel.offset;
+        *(uint32_t*)(rel.target+FIXED_OFFSET) = (uintptr_t)code.code + rel.offset;
       }else{
         printf("WARNING: Target too close to code boundary\n");
       }
@@ -344,9 +348,12 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
      so that this becomes essentially a pop-jump pair.
     xchg eax,[esp]
     test byte ptr [eax], 0x3
+      (OR test byte ptr [eax+0x40000000], 0x3 for fixed lookup offset)
     cmov(n)z eax,[eax]
-    xchg [esp],eax
-    add esp,4
+      (OR cmov(n)z eax,[eax+0x40000000] for fixed lookup offset, and
+       in its own chunk, because that's the only way I could fit it)
+    xchg [esp],eax        <- pushed to next chunk for fixed lookup offset
+    add esp,4             <- pushed to next chunk for fixed lookup offset
     ---                      (chunk boundary)
     and byte ptr [esp-4],0xf0 (0xff)    
     jmp [esp-4]
@@ -355,7 +362,12 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
      the stack pointer, I need a more complicated form:
     xchg eax,[esp]
     test byte ptr [eax], 0x3
+      (or test byte ptr [eax+0x40000000], 0x3 for fixed lookup offset)
     cmov(n)z eax, [eax]
+      (OR cmov(n)z eax,[eax+0x40000000] for fixed lookup offset, pushed to
+       next chunk for fixed lookup offset
+       TODO: If fixed lookup offset code is changed back, I need to change the
+       offset for modifying the 16-bit offset in the following chunk!)
     ---                      (chunk boundary)
     xchg [esp],eax
     add esp,0xffff <-replace this with 16-bit offset from return
@@ -373,6 +385,12 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     memcpy(code->code+code->offset, pop_jmp_template,
         sizeof(pop_jmp_template)-1);
     code->offset += sizeof(pop_jmp_template)-1;
+
+    /* Conditional mov is in separate chunk for fixed lookup offset */
+    gen_padding(code,insn,sizeof(pop_jmp_template2)-1);
+    memcpy(code->code+code->offset, pop_jmp_template2,
+        sizeof(pop_jmp_template2)-1);
+    code->offset += sizeof(pop_jmp_template2)-1;
 
     /* Mask address regardless of source (in new chunk) */
     gen_padding(code,insn,sizeof(pop_jmp_template_mask)-1);
@@ -399,7 +417,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     /* We do not need to worry about the upper bits at all because ret <imm>
        appears to interpret the immediate as unsigned, so we can always leave
        the upper bits zero */
-    *(uint16_t*)(code->code+code->offset+5) = 4 + *(uint16_t*)(insn->bytes+1);
+    *(uint16_t*)(code->code+code->offset+12) = 4 + *(uint16_t*)(insn->bytes+1);
     code->offset += sizeof(pop_jmp_imm_template2)-1;
     
     /* Mask address regardless of source (in new chunk) */
@@ -601,7 +619,9 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     mov eax, <MOD/RM>
     ---
     test byte ptr [eax], 3
+      (OR test byte ptr [eax+0x40000000], 3 for fixed lookup offset)
     cmovnz eax, [eax]
+      (OR cmov(n)z eax,[eax+0x40000000] for fixed lookup offset)
     ---
     ;and eax, 0x3FFFFFE0
     and eax, 0xFFFFFFF0   (and al, 0xFF for PUSH_OLD_ADDRESSES + TODO MASK )
