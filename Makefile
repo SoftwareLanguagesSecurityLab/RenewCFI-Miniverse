@@ -7,7 +7,7 @@ all: miniverse.o handlers.o
 	nasm -f bin -l entry.lst entry.asm
 
 UNPATCHED_TESTS := test0-basic test1-multiple-regions test2-modify-regions
-PATCHED_TESTS := test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm
+PATCHED_TESTS := test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment
 
 $(UNPATCHED_TESTS): all
 	$(CC) -m32 -g -I. tests/$@.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@

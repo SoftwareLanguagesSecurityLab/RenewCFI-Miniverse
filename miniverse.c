@@ -642,7 +642,11 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
      I think there's no harm in padding this way, as each half of this
      inserted code must be in two separate chunks anyway, and whether the code
      is at the start or end of a chunk shouldn't matter. */
-  gen_padding(code, insn, 7+insn->size);
+  /* We subtract 1 from insn->size because we switch the first byte out from
+     a jmp/call to a mov */
+  gen_padding(code, insn, sizeof(indirect_template_before)-1 +
+                          sizeof(indirect_template_after)-1 + 
+                          insn->size-1);
   check_target(code, insn);
   *(code->code+code->offset++) = indirect_template_before[0];
   *(code->code+code->offset++) = indirect_template_before[1];
@@ -655,30 +659,37 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     memcpy( code->code+code->offset, insn->bytes+2, insn->size-2 );
     code->offset += insn->size-2;
   }
-  memcpy( code->code+code->offset, indirect_template_after, 6);
-  code->offset += 6;
+  memcpy( code->code+code->offset, indirect_template_after,
+                                   sizeof(indirect_template_after)-1);
+  code->offset += sizeof(indirect_template_after)-1;
   
   /* Second half */ 
 #ifdef PUSH_OLD_ADDRESSES
   if( insn->id == SS_INS_CALL ){
-    gen_padding(code, insn, 14);
-    memcpy( code->code+code->offset, indirect_template_mask_push_jmp, 14);
+    gen_padding(code, insn, sizeof(indirect_template_mask_push_jmp)-1);
+    memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
+                                     sizeof(indirect_template_mask_push_jmp)-1);
     /* Patch template with return address from old code */
     *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
-    code->offset += 14;
+    code->offset += sizeof(indirect_template_mask_push_jmp)-1;
   }else{
-    gen_padding(code, insn, 12);
-    memcpy( code->code+code->offset, indirect_template_mask_jmp, 12);
-    code->offset += 12;
+    gen_padding(code, insn, sizeof(indirect_template_mask_jmp)-1);
+    memcpy( code->code+code->offset, indirect_template_mask_jmp,
+                                     sizeof(indirect_template_mask_jmp)-1);
+    code->offset += sizeof(indirect_template_mask_jmp)-1;
   }
 #else
-  gen_padding(code, insn, 12);
   if( insn->id == SS_INS_CALL ){
-    memcpy( code->code+code->offset, indirect_template_mask_call, 12);
+    gen_padding(code, insn, sizeof(indirect_template_mask_call)-1);
+    memcpy( code->code+code->offset, indirect_template_mask_call,
+                                     sizeof(indirect_template_mask_call)-1);
+    code->offset += sizeof(indirect_template_mask_call)-1;
   }else{
-    memcpy( code->code+code->offset, indirect_template_mask_jmp, 12);
+    gen_padding(code, insn, sizeof(indirect_template_mask_jmp)-1);
+    memcpy( code->code+code->offset, indirect_template_mask_jmp,
+                                     sizeof(indirect_template_mask_jmp)-1);
+    code->offset += sizeof(indirect_template_mask_jmp)-1;
   }
-  code->offset += 12;
 #endif
 
   /* Generate a relocation entry to patch the ORIGINAL text section */
