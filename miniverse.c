@@ -531,6 +531,11 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
     /* Jump with 4-byte offset (5-byte instruction) */
     case JMP_REL_NEAR:
       /* Save last safe data before the CALL_REL_NEAR case because code after a call is executed */
+      /* TODO: I think that this makes an incorrect assumption about the
+         number of relocations, as it's possible for 2 to be generated,
+	 AND actually the code offset can be increased by much more than 5
+         due to alignment.  I think this must be moved AFTER code->offset and
+         code->reloc_count have been set. */
       code->last_safe_offset = code->offset + 5;
       code->last_safe_reloc = code->reloc_count + 1;
     /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
@@ -820,7 +825,9 @@ size_t sort_relocs(mv_code_t *code){
   for( i = first_ind; i < code->reloc_count-1; i++ ){
     mintarget = i;
     for( j = i+1; j < code->reloc_count; j++){
-      if( code->relocs[j].target < code->relocs[mintarget].target ){
+      if( code->relocs[j].target < code->relocs[mintarget].target ||
+          (code->relocs[j].target == code->relocs[mintarget].target &&
+           code->relocs[j].offset < code->relocs[mintarget].offset) ){
         mintarget = j;
       }
     }
