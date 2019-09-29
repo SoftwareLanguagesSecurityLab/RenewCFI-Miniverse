@@ -536,8 +536,6 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
 	 AND actually the code offset can be increased by much more than 5
          due to alignment.  I think this must be moved AFTER code->offset and
          code->reloc_count have been set. */
-      code->last_safe_offset = code->offset + 5;
-      code->last_safe_reloc = code->reloc_count + 1;
     /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
     case CALL_REL_NEAR:
       /* Retrieve jmp target offset and add to relocation table */
@@ -587,6 +585,15 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       /* Relocation target is instruction address + instruction length + displacement */
       gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
       code->offset += 5;
+      /* If PUSH_OLD_ADDRESSES is set and we are here, then the instruction is
+         definitely a jmp and therefore we don't need to bother checking */ 
+#ifndef PUSH_OLD_ADDRESSES
+      if( *(insn->bytes) == JMP_REL_NEAR )
+#endif
+      {
+        code->last_safe_offset = code->offset;
+        code->last_safe_reloc = code->reloc_count;
+      }
       break;
     /* Jump with 1-byte offset (2-byte instruction) */
     case JMP_REL_SHORT:
@@ -825,9 +832,9 @@ size_t sort_relocs(mv_code_t *code){
   for( i = first_ind; i < code->reloc_count-1; i++ ){
     mintarget = i;
     for( j = i+1; j < code->reloc_count; j++){
-      if( code->relocs[j].target < code->relocs[mintarget].target ||
+      if( code->relocs[j].target < code->relocs[mintarget].target /*||
           (code->relocs[j].target == code->relocs[mintarget].target &&
-           code->relocs[j].offset < code->relocs[mintarget].offset) ){
+           code->relocs[j].offset < code->relocs[mintarget].offset)*/ ){
         mintarget = j;
       }
     }
