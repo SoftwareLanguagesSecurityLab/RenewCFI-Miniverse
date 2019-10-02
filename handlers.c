@@ -95,13 +95,18 @@ void add_code_region(uintptr_t address, size_t size){
          and omit the new region from that existing region.
          If instead the new region extends to the end of the old region
          or beyond the end, just shorten the old region. */
-      if( address+size < region->address+region->size ){
-        /* TODO: Handle splitting regions */
+      /* Instead of the previous, try just expanding region if needed */
+      if( size + (address - region->address) > region->size ){
+        region->size = size + (address - region->address);
+      }
+      return;
+      /*if( address+size < region->address+region->size ){
+        // TODO: Handle splitting regions
         printf("FATAL ERROR: Splitting regions unimplemented!\n");
         abort();
       }else{
         region->size = address - region->address;
-      }
+      }*/
     }
     region++;
   }
@@ -246,10 +251,17 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
     printf("Detected present region 0x%x (mprotect addr 0x%x) -> writable!\n", region->address, (uintptr_t)addr);
     printf("Copying from %x to %x, %x bytes!\n", (uintptr_t)((uintptr_t)region->backup.address+(addr-region->address)), (uintptr_t)addr, region->backup.size);
 #endif
+    /* Simply mprotect the entire region and set not writable,
+       expanding if necessary */
+    /* Check whether region extends beyond original, expand size if so */
+    if( len + ((uintptr_t)addr - region->address) > region->size ){
+      region->size = len + ((uintptr_t)addr - region->address);
+    }
+    return __real_mprotect((void*)region->address, region->size, prot);
     /* If the code is being set to writable but not executable,
        AND if the address is in an existing region,
        restore original bytes to the region before program can write to it */
-    int result = __real_mprotect(addr,len,prot); /* Set writable first */
+    //int result = __real_mprotect(addr,len,prot); /* Set writable first */
     /* Restore the bytes for full region or whichever sub-region has been
        set writable.  Choose the smaller of either the backup size or the
        length of the mprotected region, as we cannot write to addresses not
@@ -261,9 +273,9 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
        After this sub-region is set back to executable it
        will be split into a separate region or expanded when we attempt to
        rewrite it. */
-    if( region->backup.size < len ){
+    //if( region->backup.size < len ){
       /* Check whether we have enough space before the end of the region */
-      if( region->size-((uintptr_t)addr-region->address) > region->backup.size){
+    /*  if( region->size-((uintptr_t)addr-region->address) > region->backup.size){
         memcpy(addr,
              (void*)((uintptr_t)region->backup.address+(addr-region->address)),
              region->backup.size );
@@ -272,9 +284,9 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
              (void*)((uintptr_t)region->backup.address+(addr-region->address)),
              region->size - ((uintptr_t)addr-region->address) );
       }
-    }else{
+    }else{*/
       /* Check whether we have enough space before the end of the region */
-      if( region->size-((uintptr_t)addr-region->address) > len ){
+     /* if( region->size-((uintptr_t)addr-region->address) > len ){
         memcpy(addr,
              (void*)((uintptr_t)region->backup.address+(addr-region->address)),
              len );
@@ -284,7 +296,7 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
              region->size - ((uintptr_t)addr-region->address) );
       }
     }
-    return result;
+    return result;*/
   }
   return __real_mprotect(addr,len,prot);
 }
@@ -296,9 +308,10 @@ void rewrite_region(code_region_t* region){
 
   uint8_t *orig_code = (uint8_t *)(region->address);
   size_t code_size = region->size;
-  size_t i;
-  uint32_t offset;
+  //size_t i;
+  //uint32_t offset;
   pa_entry_t new_mem;
+  pa_entry_t old_mem;
   pa_entry_t old_mapping;
   pa_entry_t backup_mem;
 
@@ -316,16 +329,16 @@ void rewrite_region(code_region_t* region){
   page_alloc(&new_mem, code_size);
 
   /* Free old backup if one is present */
-  if( region->backup.address != 0 ){
+  /*if( region->backup.address != 0 ){
 #ifdef DEBUG
     printf("Free old backup: 0x%x, len 0x%x\n", (uintptr_t)region->backup.address, region->backup.size);
 #endif
     page_free(&region->backup);
-  }
+  }*/
   /* Backup original bytes before rewriting and patching old code section */
-  page_alloc(&backup_mem, code_size);
+  /*page_alloc(&backup_mem, code_size);
   memcpy(backup_mem.address, orig_code, code_size);
-  region->backup = backup_mem;
+  region->backup = backup_mem;*/
 
   region->mapping = gen_code(orig_code, code_size, region->address,
       (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
@@ -338,8 +351,10 @@ void rewrite_region(code_region_t* region){
      be better to have an obvious, immediate segfault than have wrong code
      run.  If I find code that fails due to trying to jump to unmapped code
      that was previously rewritten, then I can fix it then. */
+  /* Now that we don't generate pointers to our rewritten code, try to just
+     free this memory */
   if( region->new_address != 0 ){
-#ifdef DEBUG
+/*#ifdef DEBUG
     printf("Patch old rewritten code: 0x%x (len 0x%x)\n", region->new_address, region->new_size);
 #endif
     __real_mprotect((void*)region->new_address, region->new_size, PROT_READ|PROT_WRITE);
@@ -350,19 +365,21 @@ void rewrite_region(code_region_t* region){
         printf("WARNING: Too large offset 0x%x\n", offset);
       }
 #endif
-      if( offset < region->new_size && offset % 16 == 0 && i < region->mapping.size/4){
+      if( offset < region->new_size && offset % 16 == 0 && i < region->mapping.size/4){ */
         /* Patch in address at target in old rewritten code with the true
            destination in the new rewritten code, which we REALLY HOPE is also
            aligned.  OR with 0x3 to indicate a valid entry, will be masked */
 	/* TODO MASK: Add back OR with 0x3 */
-        *((uint32_t*)region->new_address+offset/4) = \
+       /* *((uint32_t*)region->new_address+offset/4) = \
             (*((uint32_t*)region->mapping.address+i)+(uint32_t)new_mem.address);
-            //(*((uint32_t*)region->mapping.address+i)+(uint32_t)new_mem.address)|0x3;
-      }
-    }
+       */     //(*((uint32_t*)region->mapping.address+i)+(uint32_t)new_mem.address)|0x3;
+  /*    }
+    }*/
     /* Free old mapping, which must have been present if we got here */
     page_free(&old_mapping);
-    //page_free(&new_mem);
+    old_mem.address = (void*)region->new_address;
+    old_mem.size = region->new_size;
+    page_free(&old_mem); // Try freeing old code
   }
 
   region->new_address = (uintptr_t)new_mem.address;
