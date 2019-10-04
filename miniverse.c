@@ -142,7 +142,7 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   code.was_prev_inst_call = false;
 #endif
   
-  ss_open(SS_MODE_32, &handle, bytes, bytes_size, (uint64_t)address);
+  ss_open(SS_MODE_32, false, &handle, bytes, bytes_size, (uint64_t)address);
 
   while( (result = ss_disassemble(&handle, &insn)) ){
     if( result == SS_SUCCESS ){
