@@ -69,7 +69,10 @@ void add_code_region(uintptr_t address, size_t size){
     /* Create huge memory buffer for lookup entries at a fixed offset
        TODO: Eventually change this from a hard-coded offset into memory
        somehow allocated in a mysterious region based on segment registers */
-    __real_mmap((void*)(address+FIXED_OFFSET),0x1000000,PROT_WRITE|PROT_READ,
+    /* Add extra buffer space before start of region for new regions that
+       could be allocated at a lower address than the initial region */
+    __real_mmap((void*)(address+FIXED_OFFSET-0x800000),
+        0x1000000+0x800000,PROT_WRITE|PROT_READ,
         MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
 #ifdef DEBUG
     printf("Allocated code regions at 0x%x\n", (uintptr_t)code_regions_mem.address);
