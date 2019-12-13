@@ -55,7 +55,8 @@ typedef struct mv_code_t{
   uint32_t offset;
   uint32_t last_safe_offset; // Last offset before the most recent unconditional jump or ret
   uintptr_t mask;
-  bool (*is_target)(uintptr_t address, uint8_t *bytes);
+  bool (*is_target)(uintptr_t address, uint8_t *bytes,
+                    uintptr_t code_base, size_t code_size);
 #ifdef DO_RET_LOOKUPS
   bool was_prev_inst_call;
 #endif
@@ -108,7 +109,8 @@ size_t sort_relocs(mv_code_t *code);
 
 pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
     uintptr_t *new_address, size_t *new_size, uint8_t chunk_size,
-    bool (*is_target)(uintptr_t address, uint8_t *bytes)){
+    bool (*is_target)(uintptr_t address, uint8_t *bytes,
+                      uintptr_t code_base, size_t code_size)){
   ss_handle handle;
   ss_insn insn;
   uint8_t result;
@@ -717,7 +719,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
 }
 
 void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
-  bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
+  bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
 #ifdef DO_RET_LOOKUPS
   if( code->was_prev_inst_call ){
     is_target = true;
@@ -747,7 +749,7 @@ void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
 }
 
 void check_target(mv_code_t *code, ss_insn *insn){
-  bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address);
+  bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
 #ifdef DO_RET_LOOKUPS
   if( code->was_prev_inst_call ){
     is_target = true;

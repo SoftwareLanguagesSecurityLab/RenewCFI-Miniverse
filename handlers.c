@@ -35,14 +35,18 @@ void *__real_mmap(void *addr, size_t length, int prot, int flags,
 int __real_mprotect(void *addr, size_t len, int prot);
 
 
-bool default_is_target(uintptr_t address, uint8_t *bytes){
+bool default_is_target(uintptr_t address, uint8_t *bytes,
+                       uintptr_t code_base, size_t code_size){
   /* Suppress unused parameter warnings */
   (void)(address);
   (void)(bytes);
+  (void)(code_base);
+  (void)(code_size);
   return false;
 }
 
-bool (*is_target)(uintptr_t address, uint8_t *bytes) = &default_is_target;
+bool (*is_target)(uintptr_t address, uint8_t *bytes,
+                  uintptr_t code_base, size_t code_size) = &default_is_target;
 
 typedef struct {
   uintptr_t	address;
@@ -174,7 +178,8 @@ void mirror_code_segments(){
   fclose(f);
 }
 
-void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes)){
+void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes,
+                            uintptr_t code_base, size_t code_size)){
   struct sigaction new_action, old_action;
   mirror_code_segments();
   if( my_is_target != NULL ){

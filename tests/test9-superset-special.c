@@ -17,7 +17,8 @@
 
 uint8_t code_version = 0;
 
-bool my_is_target(uintptr_t address, uint8_t *bytes){
+bool my_is_target(uintptr_t address, uint8_t *bytes,
+                  uintptr_t code_base, size_t code_size){
   if( code_version == 0 && address == 0x7000004 ) return true;
   if( code_version == 1 && address == 0x7000006 ) return true;
   if( code_version == 2 && address == 0x700001b ) return true;

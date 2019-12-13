@@ -18,7 +18,8 @@
 uint8_t nop_offset = 0;
 uint8_t nops[] = "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90";
 
-bool my_is_target(uintptr_t address, uint8_t *bytes){
+bool my_is_target(uintptr_t address, uint8_t *bytes,
+                  uintptr_t code_base, size_t code_size){
   if( address == 0x7000009+nop_offset ) return true;
   return false;
 }

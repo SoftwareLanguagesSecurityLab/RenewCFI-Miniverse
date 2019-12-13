@@ -15,7 +15,8 @@
 //#include <inttypes.h>
 //#include <stdbool.h>
 
-bool my_is_target(uintptr_t address, uint8_t *bytes){
+bool my_is_target(uintptr_t address, uint8_t *bytes,
+                  uintptr_t code_base, size_t code_size){
   //if( address == 0x7001000-8 ) return true;
   return false;
 }
