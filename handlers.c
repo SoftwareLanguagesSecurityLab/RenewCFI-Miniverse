@@ -25,6 +25,10 @@
 
 #define FIXED_OFFSET 0x40000000
 
+/* Access lock for wrappers and handler;
+   Should only be accessed by atomic operations */
+bool miniverse_lock;
+
 void *__real_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset);
 
@@ -63,8 +67,8 @@ void add_code_region(uintptr_t address, size_t size){
   size_t i;
   code_region_t* region;
   if( code_regions_mem.address == NULL ){
-    /* TODO: flexibly allocate more pages as needed.  For now, ASSUME we only
-       need one page to hold data on all code regions */
+    /* Start by assuming we only need one page to hold data
+       on all code regions, and allocate more pages later. */
     page_alloc(&code_regions_mem, 0x1000);
     /* Create huge memory buffer for lookup entries at a fixed offset
        TODO: Eventually change this from a hard-coded offset into memory
@@ -77,6 +81,10 @@ void add_code_region(uintptr_t address, size_t size){
 #ifdef DEBUG
     printf("Allocated code regions at 0x%x\n", (uintptr_t)code_regions_mem.address);
 #endif
+  }
+  /* Allocate more pages for code regions table if we are running out of room */
+  if( (num_code_regions + 1) * sizeof(code_region_t) > code_regions_mem.size ){
+    page_realloc(&code_regions_mem, code_regions_mem.size + 0x1000 );
   }
   region = code_regions_mem.address;
   /* Iterate through all known regions.  If a matching region is already
@@ -197,6 +205,9 @@ int __wrap_printf(const char * format, ...){
    fool the rewriter into rewriting an arbitrary memory region. */
 void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
+  /* Busy wait for access; do not allow multiple threads into wrappers
+     or handler at the same time! */
+  while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   if( (prot & PROT_EXEC) && (prot & PROT_WRITE) ){
 #ifdef DEBUG
     printf("(mmap) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
@@ -208,8 +219,10 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
     if( real_addr != MAP_FAILED ){
       add_code_region((uintptr_t)real_addr, length);
     } 
+    __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
     return real_addr;
   }
+  __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
   return __real_mmap(addr,length,prot,flags,fd,offset);
 }
 
@@ -218,6 +231,9 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
+  /* Busy wait for access; do not allow multiple threads into wrappers
+     or handler at the same time! */
+  while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   code_region_t* region;
 #ifdef DEBUG
   printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
@@ -247,6 +263,7 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
       rewrite_region(region);
       /* Indicate success; permissions for region are now RW regardless of
          original arguments to mprotect intending to make it non-writable */
+      __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
       return 0;
     }
   }else if( (prot & PROT_WRITE) && get_code_region(&region,(uintptr_t)addr) ){
@@ -260,6 +277,7 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
     if( len + ((uintptr_t)addr - region->address) > region->size ){
       region->size = len + ((uintptr_t)addr - region->address);
     }
+    __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
     return __real_mprotect((void*)region->address, region->size, prot);
     /* If the code is being set to writable but not executable,
        AND if the address is in an existing region,
@@ -301,6 +319,7 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
     }
     return result;*/
   }
+  __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
   return __real_mprotect(addr,len,prot);
 }
 
@@ -316,7 +335,7 @@ void rewrite_region(code_region_t* region){
   pa_entry_t new_mem;
   pa_entry_t old_mem;
   pa_entry_t old_mapping;
-  pa_entry_t backup_mem;
+  /*pa_entry_t backup_mem;*/
 
 #ifdef DEBUG
   printf("Calling real mprotect for orig: 0x%x, 0x%x\n", (uintptr_t)orig_code, code_size);
@@ -409,6 +428,7 @@ void rewrite_region(code_region_t* region){
 /* Catch all segfaults here and detect attempts to execute generated code
    so that we can rewrite it or redirect it to existing rewritten code. */
 void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
+  while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   (void)(sig);
   (void)(info);
   ucontext_t *con = (ucontext_t*)ucontext;
@@ -457,4 +477,6 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   /* Set instruction pointer to corresponding target in rewritten code */;
   con->uc_mcontext.gregs[REG_EIP] =
       (uintptr_t)(region->new_address+((uint32_t*)region->mapping.address)[target-region->address]);
+
+  __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
 }
