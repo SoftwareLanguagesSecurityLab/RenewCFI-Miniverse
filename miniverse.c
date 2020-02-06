@@ -149,7 +149,9 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   while( (result = ss_disassemble(&handle, &insn)) ){
     if( result == SS_SUCCESS ){
       //printf("0x%llx: %s\t(%x)\n", insn.address, insn.insn_str, code.offset);
-      code.mapping[insn.address-code.base] = code.offset; // Set offset of instruction in mapping
+      /* Put off writing to mapping until padding has been added to fit
+         instruction, so that mapping is equal to relocations */
+      //code.mapping[insn.address-code.base] = code.offset; // Set offset of instruction in mapping
       gen_insn(&code, &insn);
     }else if( insn.id == SS_INS_JMP ){ // Special jmp instruction
       /* TODO: Patch special instruction */ 
@@ -211,6 +213,11 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
       /* Unlike for RELOC_OFF type, we write directly to the target, placing the new base address
          plus the offset directly at that address in the original text section */  
       //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
+      if( code.mapping[rel.target-code.base] != rel.offset ){
+        printf("WARNING: Mapping (0x%x) and reloc (0x%x) do not agree!\n",
+               code.mapping[rel.target-code.base],
+               rel.offset);
+      }
       if( r != code.reloc_count-1 && code.relocs[r+1].target - rel.target < 4 ){
 #ifdef DEBUG
         printf("WARNING: Target %x overlaps with another target\n", rel.target);
@@ -755,6 +762,15 @@ void check_target(mv_code_t *code, ss_insn *insn){
     is_target = true;
   }
 #endif
+  /* Check whether we have encountered this address before.  If we have, then
+     this must be a special jmp, and we should not treat it as a target!
+     TODO: The method of checking this is here is a heuristic that
+     should be avoided!  I should explicitly pass info indicating the
+     instruction is a special jmp! */
+  if( insn->address-code->base > 0 && 
+      code->mapping[insn->address-code->base] != 0 ){
+    return;
+  }
   /*
     Insert ONE extra nop if instruction is not call, is a target, and there
     isn't already a serviceable nop present at the start of the chunk, 
@@ -795,6 +811,15 @@ void check_target(mv_code_t *code, ss_insn *insn){
     gen_reloc(code, RELOC_IND,
         (code->offset & code->mask)/*|0x00000003*/,
         insn->address);
+    /* Set offset of instruction in mapping.  At this point, we have added all
+       padding we should add before the start of an instruction, and generated
+       any relocation we needed.  This will generate the same value for the
+       mapping as for the relocation.  Mask the offset to match the reloc. */
+    code->mapping[insn->address-code->base] = code->offset & code->mask;
+  }else{
+    /* Set offset of instruction in mapping.  Do not mask the offset, as the
+       instruction may not be aligned if it is not a target */
+    code->mapping[insn->address-code->base] = code->offset;
   }
 }
 
