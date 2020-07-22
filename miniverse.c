@@ -98,9 +98,9 @@ uint8_t indirect_template_mask_jmp[] = "\x25\xff\xff\xff\xff\x50\x58\x58\xff\x64
 bool is_pic(mv_code_t *code, uintptr_t address);
 
 void gen_insn(mv_code_t *code, ss_insn *insn);
-inline void gen_ret(mv_code_t *code, ss_insn *insn);
-inline void gen_cond(mv_code_t *code, ss_insn *insn);
-inline void gen_uncond(mv_code_t *code, ss_insn *insn);
+static inline void gen_ret(mv_code_t *code, ss_insn *insn);
+static inline void gen_cond(mv_code_t *code, ss_insn *insn);
+static inline void gen_uncond(mv_code_t *code, ss_insn *insn);
 void gen_indirect(mv_code_t *code, ss_insn *insn);
 void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size);
 void check_target(mv_code_t *code, ss_insn *insn);
