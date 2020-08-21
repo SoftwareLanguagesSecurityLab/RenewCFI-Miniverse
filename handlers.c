@@ -29,6 +29,9 @@
    Should only be accessed by atomic operations */
 bool miniverse_lock;
 
+/* Flag storing whether this is the first invocation of the segfault handler */
+bool first_segfault = true;
+
 void *__real_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset);
 
@@ -167,8 +170,8 @@ void mirror_code_segments(){
       /* Extract region start and end addresses, and map a memory
          region at a fixed offset that corresponds to the code.  Then
          copy the memory contents over */
-      region_start = strtol(line, NULL,16);
-      region_end = strtol(line+9,NULL,16);
+      region_start = strtoul(line, NULL,16);
+      region_end = strtoul(line+9,NULL,16);
       __real_mmap((void*)(region_start+FIXED_OFFSET),region_end-region_start,
           PROT_WRITE|PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
       memcpy((void*)(region_start+FIXED_OFFSET),(void*)region_start,
@@ -178,10 +181,36 @@ void mirror_code_segments(){
   fclose(f);
 }
 
+void mirror_specific_segment(uintptr_t addr_in_segment){
+  char line[256];
+  uintptr_t region_start,region_end;
+  FILE* f = fopen("/proc/self/maps", "r");
+  while( !feof( f ) ){
+    fgets(line, 256, f);
+    region_start = strtoul(line, NULL,16);
+    region_end = strtoul(line+9,NULL,16);
+    if( addr_in_segment >= region_start && addr_in_segment < region_end ){
+      /* Map a memory region at a fixed offset from the code with a duplicate
+       * of the code contents */
+      __real_mmap((void*)(region_start+FIXED_OFFSET),region_end-region_start,
+          PROT_WRITE|PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
+      memcpy((void*)(region_start+FIXED_OFFSET),(void*)region_start,
+          region_end-region_start);
+      fclose(f);
+      return;
+    }
+  }
+  fclose(f);
+}
+
 void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes,
                             uintptr_t code_base, size_t code_size)){
   struct sigaction new_action, old_action;
-  mirror_code_segments();
+  /* I mirrored the code segments to handle attempts to jump to this code from
+   * rewritten code.  However, this only mirrors segments present when the
+   * program first registers the handler.  Any dynamically loaded modules
+   * introduced into memory later won't be handled. */
+  //mirror_code_segments();
   if( my_is_target != NULL ){
     is_target = my_is_target;
   }
@@ -430,6 +459,8 @@ void rewrite_region(code_region_t* region){
 
 /* TODO: refer to REG_EIP using a system header rather than this define */
 #define REG_EIP 14
+/* TODO: refer to REG_ESP using a system header rather than this define */
+#define REG_ESP 7
 /* Catch all segfaults here and detect attempts to execute generated code
    so that we can rewrite it or redirect it to existing rewritten code. */
 void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
@@ -441,6 +472,16 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      a region that needs rewriting, rewrite it. */
   uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
   code_region_t* region;
+
+  /* If this is the first time this handler has been invoked */
+  if( first_segfault ){
+    first_segfault = false;
+    /* Pull the top address off the stack, which should be a return address
+     * if the dynamically generated code was called, rather than jumped to.
+     * Assume for now that the code was indeed called. */
+    uintptr_t caller_address = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
+    mirror_specific_segment(caller_address);
+  }
   
   /* Check whether instruction pointer is in a known code region (a region we
      know we need to rewrite because we encountered it in an mmap or mprotect

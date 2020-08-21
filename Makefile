@@ -10,6 +10,7 @@ all: miniverse.o handlers.o
 
 UNPATCHED_TESTS := test0-basic test1-multiple-regions test2-modify-regions
 PATCHED_TESTS := test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary
+HIGH_ADDR_TEST := test11-high-addr
 
 $(UNPATCHED_TESTS): all
 	$(CC) -m32 -g -I. tests/$@.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@
@@ -19,7 +20,12 @@ $(PATCHED_TESTS): all
 	python miniverse_spatcher.py $@.s
 	$(CC) -m32 -g $@.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@
 
-test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS)
+$(HIGH_ADDR_TEST): all
+	$(CC) -m32 -g -I. tests/$@.c -S -o $@.s
+	python miniverse_spatcher.py $@.s
+	$(CC) -m32 -g $@.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -Wl,-Ttext-segment,0xd0000000 -o $@
+
+test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS) $(HIGH_ADDR_TEST)
 
 install: all
 	cp miniverse.h /usr/local/include/miniverse.h
