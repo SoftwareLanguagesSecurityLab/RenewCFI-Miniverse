@@ -44,9 +44,9 @@ typedef struct mv_code_t{
   uint8_t *code;
   pa_entry_t code_mem;
   uint32_t *mapping;
+  pa_entry_t reloc_mem;
   mv_reloc_t *relocs;
   size_t reloc_count;
-  size_t reloc_size;
   size_t last_safe_reloc; // Last reloc before the most recent unconditional jump or ret
   uintptr_t base;
   size_t orig_size;
@@ -117,7 +117,6 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   mv_code_t code;
   mv_reloc_t rel;
   pa_entry_t mapping_mem;
-  pa_entry_t reloc_mem;
   size_t r;
   size_t trimmed_bytes = 0; // This variable is optional, as it's just used to collect a metric.
   code.offset = 0;
@@ -134,11 +133,10 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   code.code_size = *new_size;// Start with however much the caller allocated
   code.chunk_size = chunk_size;
   code.orig_size = bytes_size; //Capstone decrements the original size variable, so we must save it
-  page_alloc( &reloc_mem, sizeof(mv_reloc_t) * bytes_size );
-  code.relocs = reloc_mem.address; //Will re-alloc if more relocs needed
+  page_alloc( &code.reloc_mem, sizeof(mv_reloc_t) * bytes_size );
+  code.relocs = code.reloc_mem.address; //Will re-alloc if more relocs needed
   code.reloc_count = 0; //We have allocated space for relocs, but none are used yet.
   code.last_safe_reloc = 0;
-  code.reloc_size = sizeof(mv_reloc_t) * bytes_size/2;
   code.is_target = is_target;
 #ifdef DO_RET_LOOKUPS
   code.was_prev_inst_call = false;
@@ -253,7 +251,7 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   printf("New code address: 0x%x\n", (uintptr_t)code.code);
 #endif
   //free(code.mapping);
-  page_free(&reloc_mem);
+  page_free(&code.reloc_mem);
   *new_size = code.code_size;
   *new_address = (uintptr_t)code.code;
   return mapping_mem;
@@ -824,7 +822,11 @@ void check_target(mv_code_t *code, ss_insn *insn){
 }
 
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target){
-  // TODO: re-allocate when running out of space for relocations
+  // Re-allocate when running out of space for relocations
+  if( (code->reloc_count-1) * sizeof(mv_reloc_t) >= code->reloc_mem.size ){
+    page_realloc(&code->reloc_mem, code->reloc_mem.size * 2 );
+    code->relocs = code->reloc_mem.address;
+  }
   mv_reloc_t *reloc = (code->relocs + code->reloc_count);
   reloc->type = type;
   reloc->offset = offset;
