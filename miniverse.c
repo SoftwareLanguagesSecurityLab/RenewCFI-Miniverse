@@ -664,7 +664,6 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
   /* We subtract 1 from insn->size because we switch the first byte out from
      a jmp/call to a mov */
   gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                          sizeof(indirect_template_after)-1 + 
                           insn->size-1);
   check_target(code, insn);
   *(code->code+code->offset++) = indirect_template_before[0];
@@ -678,6 +677,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     memcpy( code->code+code->offset, insn->bytes+2, insn->size-2 );
     code->offset += insn->size-2;
   }
+  gen_padding(code, insn, sizeof(indirect_template_after)-1); 
   memcpy( code->code+code->offset, indirect_template_after,
                                    sizeof(indirect_template_after)-1);
   code->offset += sizeof(indirect_template_after)-1;
@@ -724,6 +724,9 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
 }
 
 void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
+  if( new_size > code->chunk_size ){
+    printf("WARNING: Size of %d too large to fit in chunk!\n", new_size);
+  }
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
 #ifdef DO_RET_LOOKUPS
   if( code->was_prev_inst_call ){
