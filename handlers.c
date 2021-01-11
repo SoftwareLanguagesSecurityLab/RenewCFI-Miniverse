@@ -9,6 +9,7 @@
       original writable page to only be readable, I think....
 */
 //#define DEBUG
+#define RECORD_STATS
 #include <sys/mman.h>
 #include <signal.h>
 #include "handlers.h"
@@ -24,6 +25,13 @@
 #include <unistd.h>
 
 #define FIXED_OFFSET 0x40000000
+
+#ifdef RECORD_STATS
+unsigned long long mmap_counter = 0;
+unsigned long long mprotect_counter = 0;
+unsigned long long handler_counter = 0;
+unsigned long long rewrite_counter = 0;
+#endif
 
 /* Access lock for wrappers and handler;
    Should only be accessed by atomic operations */
@@ -203,6 +211,15 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
   fclose(f);
 }
 
+#ifdef RECORD_STATS
+void print_stats(){
+  printf("Call mmap: %llu\n", mmap_counter);
+  printf("Call mprotect: %llu\n", mprotect_counter);
+  printf("Exception handler: %llu\n", handler_counter);
+  printf("Rewrites: %llu\n", rewrite_counter);
+}
+#endif
+
 void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes,
                             uintptr_t code_base, size_t code_size)){
   struct sigaction new_action, old_action;
@@ -221,6 +238,10 @@ void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes,
   sigemptyset(&new_action.sa_mask); /* Don't block other signals */
   new_action.sa_flags = SA_SIGINFO; /* Specifies we want to use sa_sigaction */
   sigaction( SIGSEGV, &new_action, &old_action );
+
+#ifdef RECORD_STATS
+  atexit(print_stats);
+#endif
 }
 
 /* Create wrapper for printf that performs a no-op to try
@@ -239,6 +260,9 @@ int __wrap_printf(const char * format, ...){
    fool the rewriter into rewriting an arbitrary memory region. */
 void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
+#ifdef RECORD_STATS
+  mmap_counter++;
+#endif
   /* Busy wait for access; do not allow multiple threads into wrappers
      or handler at the same time! */
   while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
@@ -267,6 +291,9 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
 int __wrap_mprotect(void *addr, size_t len, int prot){
   /* Busy wait for access; do not allow multiple threads into wrappers
      or handler at the same time! */
+#ifdef RECORD_STATS
+  mprotect_counter++;
+#endif
   while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   code_region_t* region;
 #ifdef DEBUG
@@ -396,6 +423,9 @@ void rewrite_region(code_region_t* region){
   memcpy(backup_mem.address, orig_code, code_size);
   region->backup = backup_mem;*/
 
+#ifdef RECORD_STATS
+  rewrite_counter++;
+#endif
   region->mapping = gen_code(orig_code, code_size, region->address,
       (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
 
@@ -467,6 +497,9 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   (void)(sig);
   (void)(info);
+#ifdef RECORD_STATS
+  handler_counter++;
+#endif
   ucontext_t *con = (ucontext_t*)ucontext;
   /* Retrieve the address of the instruction pointer.  If the address is in
      a region that needs rewriting, rewrite it. */
