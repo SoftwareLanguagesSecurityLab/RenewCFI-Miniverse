@@ -90,7 +90,7 @@ void add_code_region(uintptr_t address, size_t size){
        somehow allocated in a mysterious region based on segment registers */
     /* Add extra buffer space before start of region for new regions that
        could be allocated at a lower address than the initial region */
-    __real_mmap((void*)(address+FIXED_OFFSET-0x800000),
+    __real_mmap((void*)(address*4+FIXED_OFFSET-0x800000),
         0x1000000+0x800000,PROT_WRITE|PROT_READ,
         MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
 #ifdef DEBUG
@@ -191,7 +191,7 @@ void mirror_code_segments(){
 
 void mirror_specific_segment(uintptr_t addr_in_segment){
   char line[256];
-  uintptr_t region_start,region_end;
+  uintptr_t region_start,region_end,i;
   FILE* f = fopen("/proc/self/maps", "r");
   while( !feof( f ) ){
     fgets(line, 256, f);
@@ -200,10 +200,14 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
       /* Map a memory region at a fixed offset from the code with a duplicate
        * of the code contents */
-      __real_mmap((void*)(region_start+FIXED_OFFSET),region_end-region_start,
+      __real_mmap((void*)(region_start*4+FIXED_OFFSET),(region_end-region_start)*4,
           PROT_WRITE|PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
-      memcpy((void*)(region_start+FIXED_OFFSET),(void*)region_start,
-          region_end-region_start);
+      /* Manually copy each byte in the region to first of 4 bytes in duplicate;
+         only the first byte should be checked anyway, and these values are not
+         meant to be used in lookups */
+      for( i = region_start; i < region_end; i++ ){
+        *(uint8_t*)(i*4+FIXED_OFFSET) = *(uint8_t*)i;
+      }
       fclose(f);
       return;
     }
