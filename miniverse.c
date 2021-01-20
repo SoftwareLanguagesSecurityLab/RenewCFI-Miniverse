@@ -3,6 +3,8 @@
 #include <sys/mman.h>
 #include <assert.h>
 
+#define DEBUG_PROGRESS
+
 #define DO_RET_LOOKUPS 1
 #define PUSH_OLD_ADDRESSES 1
 
@@ -25,6 +27,11 @@
 #define RELOC_OFF 1
 #define RELOC_IND 2
 #define RELOC_ABS 3
+
+#ifdef RECORD_STATS
+unsigned long long relocs_counter = 0;
+unsigned long long target_counter = 0;
+#endif
 
 /* TODO: Perhaps we should do two independent passes
    without storing relocation data.  The more data stored
@@ -140,6 +147,11 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
 #ifdef DO_RET_LOOKUPS
   code.was_prev_inst_call = false;
 #endif
+
+#ifdef DEBUG_PROGRESS
+  printf("[");
+  fflush(stdout);
+#endif
   
   ss_open(SS_MODE_32, false, &handle, bytes, bytes_size, (uint64_t)address);
 
@@ -185,7 +197,13 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   /* Assume original text section has been set to writable by caller */
   //mprotect((void*)address, code.orig_size, PROT_READ|PROT_WRITE);
  
-  sort_relocs(&code);
+  /* Disable sorting of relocations, since it's only needed if we need to
+     make sure they don't overlap.  If we have room for each relocation,
+     there's no problem. */
+  //sort_relocs(&code);
+#ifdef RECORD_STATS
+  relocs_counter += code.reloc_count;
+#endif
   //printf("Type\tOffset\t\tTarget\t\tNew Target\tDisplacement\n");
   // Loop through relocations and patch target destinations
   for( r = 0; r < code.reloc_count; r++ ){
@@ -253,6 +271,10 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   page_free(&code.reloc_mem);
   *new_size = code.code_size;
   *new_address = (uintptr_t)code.code;
+#ifdef DEBUG_PROGRESS
+  printf("]");
+  fflush(stdout);
+#endif
   return mapping_mem;
 }
 
@@ -812,6 +834,15 @@ void check_target(mv_code_t *code, ss_insn *insn){
     /* Subtract to get to chunk-aligned 0x90 */
     /* Set the bottom 2 bits of offset, which will be masked off. */
     /* TODO MASK: Restore original masking code */
+#ifdef RECORD_STATS
+    target_counter++;
+#endif
+    /* Let's try just writing directly, now that we have as much space
+       as we need to put the full address for every possible target address */
+    /* Won't work, we need to wait because if we reallocate the code region
+       to expand it, the base address can change, so we can't patch until
+       after we're done rewriting */
+    //*(uintptr_t*)((intptr_t)insn->address*4+FIXED_OFFSET) = (uintptr_t)(code->code + (code->offset & code->mask)/*|0x00000003*/);
     gen_reloc(code, RELOC_IND,
         (code->offset & code->mask)/*|0x00000003*/,
         insn->address);
@@ -819,6 +850,8 @@ void check_target(mv_code_t *code, ss_insn *insn){
        padding we should add before the start of an instruction, and generated
        any relocation we needed.  This will generate the same value for the
        mapping as for the relocation.  Mask the offset to match the reloc. */
+    /* TODO MASK: Also restore original masking code?
+       None was commented out here, but it should also be done here... */
     code->mapping[insn->address-code->base] = code->offset & code->mask;
   }else{
     /* Set offset of instruction in mapping.  Do not mask the offset, as the

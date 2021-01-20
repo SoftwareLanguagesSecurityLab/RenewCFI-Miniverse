@@ -2,6 +2,13 @@
 extern "C" {
 #endif 
 
+#define RECORD_STATS
+
+#ifdef RECORD_STATS
+extern unsigned long long relocs_counter;
+extern unsigned long long target_counter;
+#endif
+
 #include <ssdis.h>
 #include <pagealloc.h>
 

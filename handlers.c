@@ -9,7 +9,6 @@
       original writable page to only be readable, I think....
 */
 //#define DEBUG
-#define RECORD_STATS
 #include <sys/mman.h>
 #include <signal.h>
 #include "handlers.h"
@@ -81,6 +80,7 @@ pa_entry_t code_regions_mem = {NULL,0};
 void add_code_region(uintptr_t address, size_t size){
   size_t i;
   code_region_t* region;
+  void* mapped_addr;
   if( code_regions_mem.address == NULL ){
     /* Start by assuming we only need one page to hold data
        on all code regions, and allocate more pages later. */
@@ -90,9 +90,15 @@ void add_code_region(uintptr_t address, size_t size){
        somehow allocated in a mysterious region based on segment registers */
     /* Add extra buffer space before start of region for new regions that
        could be allocated at a lower address than the initial region */
-    __real_mmap((void*)(address*4+FIXED_OFFSET-0x800000),
-        0x1000000+0x800000,PROT_WRITE|PROT_READ,
+    mapped_addr = __real_mmap((void*)(address*4+FIXED_OFFSET-0x800000),
+        0x1000000*4+0x800000,PROT_WRITE|PROT_READ,
         MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
+    if( mapped_addr == MAP_FAILED ){
+      printf("FATAL ERROR: Could not map fixed offset region 0x%x-0x%x\n",
+             (address*4+FIXED_OFFSET-0x800000),
+             (address*4+FIXED_OFFSET-0x800000)+0x1000000*4+0x800000);
+      _exit(EXIT_FAILURE);
+    }
 #ifdef DEBUG
     printf("Allocated code regions at 0x%x\n", (uintptr_t)code_regions_mem.address);
 #endif
@@ -193,6 +199,7 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
   char line[256];
   uintptr_t region_start,region_end,i;
   FILE* f = fopen("/proc/self/maps", "r");
+  void* mapped_addr;
   while( !feof( f ) ){
     fgets(line, 256, f);
     region_start = strtoul(line, NULL,16);
@@ -200,8 +207,16 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
       /* Map a memory region at a fixed offset from the code with a duplicate
        * of the code contents */
-      __real_mmap((void*)(region_start*4+FIXED_OFFSET),(region_end-region_start)*4,
-          PROT_WRITE|PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
+      mapped_addr = __real_mmap((void*)(region_start*4+FIXED_OFFSET),
+                                (region_end-region_start)*4,
+                                PROT_WRITE|PROT_READ,
+                                MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
+      if( mapped_addr == MAP_FAILED ){
+        printf("FATAL ERROR: Could not map mirrored region at 0x%x-0x%x\n",
+               (region_start*4+FIXED_OFFSET),
+               (region_start*4+FIXED_OFFSET)+(region_end-region_start)*4);
+        _exit(EXIT_FAILURE);
+      }
       /* Manually copy each byte in the region to first of 4 bytes in duplicate;
          only the first byte should be checked anyway, and these values are not
          meant to be used in lookups */
@@ -221,6 +236,8 @@ void print_stats(){
   printf("Call mprotect: %llu\n", mprotect_counter);
   printf("Exception handler: %llu\n", handler_counter);
   printf("Rewrites: %llu\n", rewrite_counter);
+  printf("Relocs: %llu\n", relocs_counter);
+  printf("Targets: %llu\n", target_counter);
 }
 #endif
 
