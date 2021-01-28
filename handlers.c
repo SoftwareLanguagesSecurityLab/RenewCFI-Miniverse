@@ -23,7 +23,7 @@
 #include <sys/ucontext.h> // For hardware-specific registers (TODO: Does not work as expected!)
 #include <unistd.h>
 
-#define FIXED_OFFSET 0x40000000
+uintptr_t fixed_offset = 0x20000000;
 
 #ifdef RECORD_STATS
 unsigned long long mmap_counter = 0;
@@ -80,28 +80,10 @@ pa_entry_t code_regions_mem = {NULL,0};
 void add_code_region(uintptr_t address, size_t size){
   size_t i;
   code_region_t* region;
-  void* mapped_addr;
   if( code_regions_mem.address == NULL ){
     /* Start by assuming we only need one page to hold data
        on all code regions, and allocate more pages later. */
     page_alloc(&code_regions_mem, 0x1000);
-    /* Create huge memory buffer for lookup entries at a fixed offset
-       TODO: Eventually change this from a hard-coded offset into memory
-       somehow allocated in a mysterious region based on segment registers */
-    /* Add extra buffer space before start of region for new regions that
-       could be allocated at a lower address than the initial region */
-    mapped_addr = __real_mmap((void*)(address*4+FIXED_OFFSET-0x800000),
-        0x1000000*4+0x800000,PROT_WRITE|PROT_READ,
-        MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
-    if( mapped_addr == MAP_FAILED ){
-      printf("FATAL ERROR: Could not map fixed offset region 0x%x-0x%x\n",
-             (address*4+FIXED_OFFSET-0x800000),
-             (address*4+FIXED_OFFSET-0x800000)+0x1000000*4+0x800000);
-      _exit(EXIT_FAILURE);
-    }
-#ifdef DEBUG
-    printf("Allocated code regions at 0x%x\n", (uintptr_t)code_regions_mem.address);
-#endif
   }
   /* Allocate more pages for code regions table if we are running out of room */
   if( (num_code_regions + 1) * sizeof(code_region_t) > code_regions_mem.size ){
@@ -173,26 +155,80 @@ bool get_code_region(code_region_t** region, uintptr_t address){
   return false;
 }
 
-void mirror_code_segments(){
+bool get_specific_segment(uintptr_t addr_in_segment,
+                          uintptr_t *segment_start, uintptr_t *segment_end){
   char line[256];
   uintptr_t region_start,region_end;
   FILE* f = fopen("/proc/self/maps", "r");
   while( !feof( f ) ){
     fgets(line, 256, f);
-    /* If region is executable, character at this index is 'x' */
-    if( line[20] == 'x' ){
-      /* Extract region start and end addresses, and map a memory
-         region at a fixed offset that corresponds to the code.  Then
-         copy the memory contents over */
-      region_start = strtoul(line, NULL,16);
-      region_end = strtoul(line+9,NULL,16);
-      __real_mmap((void*)(region_start+FIXED_OFFSET),region_end-region_start,
-          PROT_WRITE|PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
-      memcpy((void*)(region_start+FIXED_OFFSET),(void*)region_start,
-          region_end-region_start);
+    region_start = strtoul(line, NULL,16);
+    region_end = strtoul(line+9,NULL,16);
+    if( addr_in_segment >= region_start && addr_in_segment < region_end ){
+      *segment_start = region_start;
+      *segment_end = region_end;
+      fclose(f);
+      return true;
     }
   }
   fclose(f);
+  return false;
+}
+
+bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
+  char line[256];
+  uintptr_t region_start,region_end;
+  if( range_end < range_start ){
+    printf("ALERT: I REALLY don't like 0x%x-0x%x\n", range_start, range_end);
+    return false;
+  }
+  FILE* f = fopen("/proc/self/maps", "r");
+  while( !feof( f ) ){
+    fgets(line, 256, f);
+    /* Extract region start and end addresses, and check if
+       memory region falls within given range.  If so, then the
+       range is not a valid candidate for new mmap */
+    region_start = strtoul(line, NULL,16);
+    region_end = strtoul(line+9,NULL,16);
+    if( (region_start >= range_start && region_start <= range_end) ||
+        (region_end >= range_start && region_end <= range_end) ){
+      fclose(f);
+      printf("ALERT: I don't like 0x%x-0x%x\n", range_start, range_end);
+      return false;
+    }
+  }
+  fclose(f);
+  return true;
+}
+
+void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
+  uintptr_t caller_table_start;
+  uintptr_t caller_table_end;
+  uint32_t i;
+
+  if( !get_specific_segment(calling_addr,
+                            &caller_table_start, &caller_table_end) ){
+    printf("FATAL ERROR: Couldn't find segment for address 0x%x\n",
+           calling_addr);
+    _exit(EXIT_FAILURE);
+  }
+
+  /* Try offsets spanning essentially the entire address range.
+     If there is not a large empty region, then we simply can't allocate
+     the memory we need.*/
+  for( i = 0; i < 16; i++ ){
+    if( is_proposed_range_valid(segfault_addr*4+fixed_offset-0x800000,
+                                segfault_addr*4+fixed_offset+0x1000000*4) &&
+        is_proposed_range_valid(caller_table_start*4+fixed_offset,
+                                caller_table_start*4+fixed_offset + 
+                                (caller_table_end-caller_table_start)*4 ) ){
+      return;
+    }
+    fixed_offset += 0x10000000;
+  }
+  printf("FATAL ERROR: Can't find acceptable offset for addrs 0x%x and 0x%x\n",
+         segfault_addr, calling_addr);
+  _exit(EXIT_FAILURE);
 }
 
 void mirror_specific_segment(uintptr_t addr_in_segment){
@@ -207,21 +243,21 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
       /* Map a memory region at a fixed offset from the code with a duplicate
        * of the code contents */
-      mapped_addr = __real_mmap((void*)(region_start*4+FIXED_OFFSET),
+      mapped_addr = __real_mmap((void*)(region_start*4+fixed_offset),
                                 (region_end-region_start)*4,
                                 PROT_WRITE|PROT_READ,
                                 MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
       if( mapped_addr == MAP_FAILED ){
         printf("FATAL ERROR: Could not map mirrored region at 0x%x-0x%x\n",
-               (region_start*4+FIXED_OFFSET),
-               (region_start*4+FIXED_OFFSET)+(region_end-region_start)*4);
+               (region_start*4+fixed_offset),
+               (region_start*4+fixed_offset)+(region_end-region_start)*4);
         _exit(EXIT_FAILURE);
       }
       /* Manually copy each byte in the region to first of 4 bytes in duplicate;
          only the first byte should be checked anyway, and these values are not
          meant to be used in lookups */
       for( i = region_start; i < region_end; i++ ){
-        *(uint8_t*)(i*4+FIXED_OFFSET) = *(uint8_t*)i;
+        *(uint8_t*)(i*4+fixed_offset) = *(uint8_t*)i;
       }
       fclose(f);
       return;
@@ -310,11 +346,11 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    privileges too.  TODO: Handle the same chunk of memory repeatedly having
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
-  /* Busy wait for access; do not allow multiple threads into wrappers
-     or handler at the same time! */
 #ifdef RECORD_STATS
   mprotect_counter++;
 #endif
+  /* Busy wait for access; do not allow multiple threads into wrappers
+     or handler at the same time! */
   while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   code_region_t* region;
 #ifdef DEBUG
@@ -339,10 +375,16 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
          call into un-rewritten code.  This doesn't fix the issue for RWX code,
          but for generated code with good hygiene it should work. */
       get_code_region(&region, (uintptr_t)addr);
+      
+      /* Wait before pre-emptively rewriting until after first time
+         we have encountered a segfault, so that we can safely allocate
+         the fixed-offset tables first */
+      if( !first_segfault ){
 #ifdef DEBUG
-      printf("Rewriting 0x%x (size 0x%x) early!\n", region->address, region->size);
+        printf("Rewriting 0x%x (size 0x%x) early!\n", region->address, region->size);
 #endif
-      rewrite_region(region);
+        rewrite_region(region);
+      }
       /* Indicate success; permissions for region are now RW regardless of
          original arguments to mprotect intending to make it non-writable */
       __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
@@ -527,15 +569,6 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
   code_region_t* region;
 
-  /* If this is the first time this handler has been invoked */
-  if( first_segfault ){
-    first_segfault = false;
-    /* Pull the top address off the stack, which should be a return address
-     * if the dynamically generated code was called, rather than jumped to.
-     * Assume for now that the code was indeed called. */
-    uintptr_t caller_address = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
-    mirror_specific_segment(caller_address);
-  }
   
   /* Check whether instruction pointer is in a known code region (a region we
      know we need to rewrite because we encountered it in an mmap or mprotect
@@ -567,6 +600,35 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
          a catchable SIGABRT signal */
       _exit(EXIT_FAILURE);
     //}
+  }
+
+  /* If this is the first time this handler has been invoked */
+  if( first_segfault ){
+    first_segfault = false;
+    /* Pull the top address off the stack, which should be a return address
+     * if the dynamically generated code was called, rather than jumped to.
+     * Assume for now that the code was indeed called. */
+    uintptr_t caller_address = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
+
+    set_fixed_offset(region->address, caller_address);
+
+    /* Create huge memory buffer for lookup entries at a fixed offset
+       TODO: Eventually change this from a hard-coded offset into memory
+       somehow allocated in a mysterious region based on segment registers */
+    /* Add extra buffer space before start of region for new regions that
+       could be allocated at a lower address than the initial region */
+    void* mapped_addr = __real_mmap(
+        (void*)(region->address*4+fixed_offset-0x800000),
+        0x1000000*4+0x800000,PROT_WRITE|PROT_READ,
+        MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
+    if( mapped_addr == MAP_FAILED ){
+      printf("FATAL ERROR: Could not map fixed offset region 0x%x-0x%x\n",
+             (region->address*4+fixed_offset-0x800000),
+             (region->address*4+fixed_offset-0x800000)+0x1000000*4+0x800000);
+      _exit(EXIT_FAILURE);
+    }
+
+    mirror_specific_segment(caller_address);
   }
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
   /* If region has not been rewritten yet, rewrite it. */

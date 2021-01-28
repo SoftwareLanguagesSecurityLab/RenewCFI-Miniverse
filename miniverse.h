@@ -12,6 +12,8 @@ extern unsigned long long target_counter;
 #include <ssdis.h>
 #include <pagealloc.h>
 
+extern uintptr_t fixed_offset;
+
 /* Defined in a different module (handlers.c), but declared here so we
    only need one header file when installing the library */
 extern void register_handler(bool (*my_is_target)(uintptr_t address,
