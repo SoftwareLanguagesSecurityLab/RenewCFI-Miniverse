@@ -613,6 +613,12 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         gen_reloc(code, RELOC_OFF, code->offset+6, insn->address+5+disp);
         code->offset += 13; // length of push + call + add esp,4
 #endif
+       /* There are situations in which a call may never return,
+          and therefore it is possible for a call to be followed by garbage.
+          Should any code follow this pattern?  I don't know, but I have
+          encountered this case, so I have to allow calls as well. */
+        code->last_safe_offset = code->offset;
+        code->last_safe_reloc = code->reloc_count;
         break;
       }
       gen_padding(code, insn, 5); 
@@ -750,11 +756,15 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
   /*gen_reloc(code, RELOC_IND, saved_off, insn->address);*/
   
   /* For a jump, we know that code can't fall through, so this offset is safe,
-     i.e., we can assume it is plausibly real code */
-  if( insn->id == SS_INS_JMP ){
+     i.e., we can assume it is plausibly real code.
+     For a call, there are situations in which a call may never return,
+     and therefore it is possible for a call to be followed by garbage.
+     Should any code follow this pattern?  I don't know, but I have
+     encountered this case, so I have to allow calls as well. */
+  //if( insn->id == SS_INS_JMP ){
     code->last_safe_offset = code->offset;
     code->last_safe_reloc = code->reloc_count;
-  }
+  //}
   
 }
 

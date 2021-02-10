@@ -125,27 +125,55 @@ int main(int argc, char** argv){
 	*/
 	uint8_t orig_code3[] = "\x31\xc0\x57\x68\x1b\x00\x00\x07\x89\xe7\x3d\xd0\xa0\x37\xf5\xff\x17\x85\xd2\x0f\x85\x28\xf8\xff\xff\x5f\x5f\x40\x31\xd2\xc3";
 
+  /*
+    Create a sequence in which a call instruction is followed by illegal
+    instructions.  Then have the call instruction never return.
+    Part of this sequence was actually found in the wild, in a
+    jit compiler.
+  */
+  /*
+  0000000000000000 31c0             xor eax,eax
+  0000000000000002 e806000000       call 0x700000d
+  0000000000000007 0481             add al,0x81
+  0000000000000009 ff               (bad)
+  000000000000000a ff               (bad)
+  000000000000000b ffc7             inc edi
+  000000000000000d 40               inc eax
+  000000000000000e 83c404           add esp, 4
+  0000000000000011 c3               ret
+  */
+  uint8_t orig_code4[] = "\x31\xc0\xe8\x06\x00\x00\x00\x04\x81\xff\xff\xff\xc7\x40\x83\xc4\x04\xc3";
+
 	void *code_buffer = (void*)0x7000000;
 	
 	mmap(code_buffer, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	memcpy(code_buffer, orig_code, sizeof(orig_code));
 	/* Try to make code executable; our mprotect hook will prevent this */
-        mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
-        uint32_t res = ((uint32_t (*)(uint32_t))code_buffer)(0);
-        printf("Result: %d Expected: 4\n", res );
-	code_version++;
-        mprotect(code_buffer, 4096, PROT_WRITE|PROT_READ);
+  mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
+  uint32_t res = ((uint32_t (*)(uint32_t))code_buffer)(0);
+  printf("Result: %d Expected: 4\n", res );
+	
+  code_version++;
+  mprotect(code_buffer, 4096, PROT_WRITE|PROT_READ);
 	memcpy(code_buffer, orig_code2, sizeof(orig_code2));
-        mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
-        res = ((uint32_t (*)(uint32_t))code_buffer+2)(0);
-        printf("Result: %d Expected: 4\n", res );
-	code_version++;
-        mprotect(code_buffer, 4096, PROT_WRITE|PROT_READ);
+  mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
+  res = ((uint32_t (*)(uint32_t))code_buffer+2)(0);
+  printf("Result: %d Expected: 4\n", res );
+	
+  code_version++;
+  mprotect(code_buffer, 4096, PROT_WRITE|PROT_READ);
 	memcpy(code_buffer, orig_code3, sizeof(orig_code3));
-        mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
-        res = ((uint32_t (*)(uint32_t))code_buffer)(0);
-        printf("Result: %d Expected: 2\n", res );
+  mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
+  res = ((uint32_t (*)(uint32_t))code_buffer)(0);
+  printf("Result: %d Expected: 2\n", res );
+        
+  code_version++;
+  mprotect(code_buffer, 4096, PROT_WRITE|PROT_READ);
+	memcpy(code_buffer, orig_code4, sizeof(orig_code3));
+  mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
+  res = ((uint32_t (*)(uint32_t))code_buffer)(0);
+  printf("Result: %d Expected: 1\n", res );
 
 	return 0;
 
