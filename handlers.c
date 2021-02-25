@@ -567,14 +567,14 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   /* Retrieve the address of the instruction pointer.  If the address is in
      a region that needs rewriting, rewrite it. */
   uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
-  code_region_t* region;
+  code_region_t* segfault_region;
 
   
   /* Check whether instruction pointer is in a known code region (a region we
      know we need to rewrite because we encountered it in an mmap or mprotect
      call).  If not, then the segfault must have been triggered by some actual
      invalid memory access, so abort. */
-  if( !get_code_region(&region, target) ){
+  if( !get_code_region(&segfault_region, target) ){
 #ifdef DEBUG
     printf("WARNING: 0x%x is untracked, attempting lookup.\n", target);
 #endif
@@ -610,7 +610,7 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      * Assume for now that the code was indeed called. */
     uintptr_t caller_address = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
 
-    set_fixed_offset(region->address, caller_address);
+    set_fixed_offset(segfault_region->address, caller_address);
 
     /* Create huge memory buffer for lookup entries at a fixed offset
        TODO: Eventually change this from a hard-coded offset into memory
@@ -618,27 +618,37 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
     /* Add extra buffer space before start of region for new regions that
        could be allocated at a lower address than the initial region */
     void* mapped_addr = __real_mmap(
-        (void*)(region->address*4+fixed_offset-0x800000),
+        (void*)(segfault_region->address*4+fixed_offset-0x800000),
         0x1000000*4+0x800000,PROT_WRITE|PROT_READ,
         MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
     if( mapped_addr == MAP_FAILED ){
       printf("FATAL ERROR: Could not map fixed offset region 0x%x-0x%x\n",
-             (region->address*4+fixed_offset-0x800000),
-             (region->address*4+fixed_offset-0x800000)+0x1000000*4+0x800000);
+             (segfault_region->address*4+fixed_offset-0x800000),
+             (segfault_region->address*4+fixed_offset-0x800000)+
+                 0x1000000*4+0x800000);
       _exit(EXIT_FAILURE);
     }
 
     mirror_specific_segment(caller_address);
   }
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
-  /* If region has not been rewritten yet, rewrite it. */
-  if( !region->rewritten ){
-    rewrite_region(region);
+  /* If region has not been rewritten yet, rewrite it and all other regions
+     that have not yet been rewritten.  This is important in case there are
+     cross-region jumps! */
+  if( !segfault_region->rewritten ){
+    code_region_t* region = code_regions_mem.address;
+    for( size_t i = 0; i < num_code_regions; i++ ){
+      if( !region->rewritten ){
+        rewrite_region(region);
+      }
+      region++;
+    }
   }
 
   /* Set instruction pointer to corresponding target in rewritten code */;
   con->uc_mcontext.gregs[REG_EIP] =
-      (uintptr_t)(region->new_address+((uint32_t*)region->mapping.address)[target-region->address]);
+      (uintptr_t)(segfault_region->new_address + 
+      ((uint32_t*)segfault_region->mapping.address)[target-segfault_region->address]);
 
   __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
 }

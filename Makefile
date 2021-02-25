@@ -9,7 +9,7 @@ all: miniverse.o handlers.o
 	#nasm -f bin -l entry.lst entry.asm
 
 UNPATCHED_TESTS := test0-basic brokentest-multiple-regions test2-modify-regions
-PATCHED_TESTS := test1-pointers-in-stack test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary
+PATCHED_TESTS := test1-pointers-in-stack test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions
 HIGH_ADDR_TEST := test11-high-addr
 
 $(UNPATCHED_TESTS): all
