@@ -32,6 +32,9 @@ unsigned long long handler_counter = 0;
 unsigned long long rewrite_counter = 0;
 #endif
 
+uintptr_t rewriter_region_start;
+uintptr_t rewriter_region_end;
+
 /* Access lock for wrappers and handler;
    Should only be accessed by atomic operations */
 bool miniverse_lock;
@@ -218,7 +221,7 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
      the memory we need.*/
   for( i = 0; i < 16; i++ ){
     if( is_proposed_range_valid(segfault_addr*4+fixed_offset-0x800000,
-                                segfault_addr*4+fixed_offset+0x1000000*4) &&
+                                segfault_addr*4+fixed_offset+0x2000000*4) &&
         is_proposed_range_valid(caller_table_start*4+fixed_offset,
                                 caller_table_start*4+fixed_offset + 
                                 (caller_table_end-caller_table_start)*4 ) ){
@@ -295,6 +298,10 @@ void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes,
   sigemptyset(&new_action.sa_mask); /* Don't block other signals */
   new_action.sa_flags = SA_SIGINFO; /* Specifies we want to use sa_sigaction */
   sigaction( SIGSEGV, &new_action, &old_action );
+  /* Record the starting and ending addresses of the region the rewriter is in.
+     This will allow us to detect if a segfault occurs inside miniverse. */
+  get_specific_segment((uintptr_t)&gen_code,
+                       &rewriter_region_start, &rewriter_region_end);
 
 #ifdef RECORD_STATS
   atexit(print_stats);
@@ -557,19 +564,30 @@ void rewrite_region(code_region_t* region){
 /* Catch all segfaults here and detect attempts to execute generated code
    so that we can rewrite it or redirect it to existing rewritten code. */
 void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
-  while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   (void)(sig);
   (void)(info);
-#ifdef RECORD_STATS
-  handler_counter++;
-#endif
   ucontext_t *con = (ucontext_t*)ucontext;
   /* Retrieve the address of the instruction pointer.  If the address is in
      a region that needs rewriting, rewrite it. */
   uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
   code_region_t* segfault_region;
 
+  /* Check that this segfault did not occur inside the same memory region as
+     miniverse.  If it did, exit with a fatal error. */
+  if( target >= rewriter_region_start && target < rewriter_region_end ){
+    printf("FATAL ERROR: non-jit segfault at 0x%x (offset 0x%x)\n", target,
+           target - rewriter_region_start );
+    /* Exit as soon as possible, don't bother with abort because it raises
+       a catchable SIGABRT signal */
+    _exit(EXIT_FAILURE);
+  }
   
+  while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
+
+#ifdef RECORD_STATS
+  handler_counter++;
+#endif
+
   /* Check whether instruction pointer is in a known code region (a region we
      know we need to rewrite because we encountered it in an mmap or mprotect
      call).  If not, then the segfault must have been triggered by some actual
@@ -619,13 +637,13 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
        could be allocated at a lower address than the initial region */
     void* mapped_addr = __real_mmap(
         (void*)(segfault_region->address*4+fixed_offset-0x800000),
-        0x1000000*4+0x800000,PROT_WRITE|PROT_READ,
+        0x2000000*4+0x800000,PROT_WRITE|PROT_READ,
         MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
     if( mapped_addr == MAP_FAILED ){
       printf("FATAL ERROR: Could not map fixed offset region 0x%x-0x%x\n",
              (segfault_region->address*4+fixed_offset-0x800000),
              (segfault_region->address*4+fixed_offset-0x800000)+
-                 0x1000000*4+0x800000);
+                 0x2000000*4+0x800000);
       _exit(EXIT_FAILURE);
     }
 
