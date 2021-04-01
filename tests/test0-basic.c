@@ -32,27 +32,6 @@ printf("true: Special case 2!\n");
   return false;
 }
 
-/* Try to get call instruction aligned right */
-uint32_t __attribute__((aligned(16))) code_caller(uintptr_t addr, int arg){
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  ((uint32_t (*)(uint32_t))addr)(arg);
-  __asm__ volatile("fwait"); /* TODO MASK: Restore original masking code */
-}
-
 int main(int argc, char** argv){
 
 	/* Hooks are currently done with linker flags, not runtime functions */
@@ -76,9 +55,9 @@ int main(int argc, char** argv){
 	/* Try to make our code executable (but only 1st page); our mprotect hook will prevent this */
         mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
 
-        uint32_t result = code_caller((uintptr_t)code_buffer,0);
+        uint32_t result = ((uint32_t (*)(uint32_t))code_buffer)(0);
         printf("Result for 0: %s (%x)\n", (uint8_t*)result, result );
-        result = code_caller((uintptr_t)code_buffer,1);
+        result = ((uint32_t (*)(uint32_t))code_buffer)(1);
         printf("Result for 1: %s (%x)\n", (uint8_t*)result, result );
 	return 0;
 

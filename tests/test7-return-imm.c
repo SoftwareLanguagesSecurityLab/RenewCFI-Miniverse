@@ -28,9 +28,9 @@ void introspect_callback(uintptr_t addr){
 int main(int argc, char** argv){
 
 	/* Hooks are currently done with linker flags, not runtime functions */
-        //mmap_hook(&mmap);
-        //mprotect_hook(&mprotect);
-        register_handler(&my_is_target);
+  //mmap_hook(&mmap);
+  //mprotect_hook(&mprotect);
+  register_handler(&my_is_target);
 
 
 	/*
@@ -72,22 +72,21 @@ int main(int argc, char** argv){
 	memcpy(code_buffer, orig_code, sizeof(orig_code));
 
 	/* Try to make code executable; our mprotect hook will prevent this */
-        mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
+  mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
 
 	// No need to call code_caller if I use the .s preprocessing script!
 	// That script automatically aligns the indirect call instruction that
 	// this line generates, so that the return address for the instruction
 	// after this call is aligned!
-        uint32_t res = ((uint32_t (*)(uint32_t))code_buffer)(0);
-        printf("Result: %d Expected: 3\n", res );
-        mprotect(code_buffer, 4096, PROT_WRITE|PROT_READ);
+  uint32_t res = ((uint32_t (*)(uint32_t))code_buffer)(0);
+  printf("Result: %d Expected: 3\n", res );
+  mprotect(code_buffer, 4096, PROT_WRITE|PROT_READ);
 	memcpy(code_buffer, orig_code2, sizeof(orig_code2));
-        mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
-        res = ((uint32_t (*)(uint32_t))code_buffer)(0);
-        printf("Result: %d Expected: 4\n", res );
+  mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
+  res = ((uint32_t (*)(uint32_t))code_buffer)(0);
+  printf("Result: %d Expected: 4\n", res );
 
 	return 0;
 
-	/* Since this isn't a library loaded in the traditional way, it doesn't have destructors
-	   and therefore should execute without crashing */
+	/* Since this isn't a library loaded in the traditional way, it doesn't have destructors and therefore should execute without crashing */
 }

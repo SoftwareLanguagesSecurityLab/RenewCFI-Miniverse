@@ -49,19 +49,13 @@ if __name__ == '__main__':
         # WARNING: If the first instruction in a function were to be an
         # indirect call, then we would insert a nop here but not align the
         # instruction after it.
-        # TODO MASK: Restore original masking code
-        out_buf +='\tfwait\n%s\n'%lines[i]
-        #out_buf +='\tnop\n%s\n'%lines[i]
+        out_buf +='\tnop\n%s\n'%lines[i]
       elif call_indirect.match(lines[i]):
         # We want the instruction after this indirect call to be 16-byte aligned
-        # TODO MASK: Restore original masking code
-        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tfwait\n'%lines[i]
-        #out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
+        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
       elif call_indirect_offset.match(lines[i]):
         # We want the instruction after this indirect call to be 16-byte aligned
-        # TODO MASK: Restore original masking code
-        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tfwait\n'%lines[i]
-        #out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
+        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
       else:
         # Copy all irrelevant lines without modification
         out_buf += '%s\n'%lines[i]

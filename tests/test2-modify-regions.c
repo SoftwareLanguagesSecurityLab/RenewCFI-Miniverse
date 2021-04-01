@@ -22,27 +22,6 @@ bool my_is_target(uintptr_t address, uint8_t *bytes,
   return false;
 }
 
-/* Try to get call instruction aligned right */
-uint32_t __attribute__((aligned(16))) code_caller(uintptr_t addr, int arg){
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  __asm__ volatile("nop");
-  ((uint32_t (*)(uint32_t))addr)(arg);
-  __asm__ volatile("fwait"); /* TODO MASK: Restore original masking code */
-}
-
 int main(int argc, char** argv){
 
 	/* Hooks are currently done with linker flags, not runtime functions */
@@ -69,26 +48,26 @@ int main(int argc, char** argv){
 	memcpy(code_buffer, orig_code, sizeof(orig_code));
 
 	/* Try to make code executable; our mprotect hook will prevent this */
-        mprotect(code_buffer, 4096*2, PROT_EXEC|PROT_READ);
+  mprotect(code_buffer, 4096*2, PROT_EXEC|PROT_READ);
 
 	// Test code, which involves an indirect jump and weird ret behavior
-        uint32_t result = code_caller((uintptr_t)code_buffer,0);
-        printf("Result: %d Expected: 4\n", result );
+  uint32_t result = ((uint32_t (*)(uint32_t))code_buffer)(0);
+  printf("Result: %d Expected: 4\n", result );
 
 	// Test modifying only part of original code
-        mprotect(code_buffer, 4096*2, PROT_WRITE|PROT_READ);
+  mprotect(code_buffer, 4096*2, PROT_WRITE|PROT_READ);
 	memcpy(code_buffer+0xe,orig_code_patch,sizeof(orig_code_patch));
-        mprotect(code_buffer, 4096*2, PROT_EXEC|PROT_READ);
-        result = code_caller((uintptr_t)code_buffer,1);
-        printf("Result: %d Expected: 5\n", result );
+  mprotect(code_buffer, 4096*2, PROT_EXEC|PROT_READ);
+  result = ((uint32_t (*)(uint32_t))code_buffer)(1);
+  printf("Result: %d Expected: 5\n", result );
 
 	// Test modifying a sub-region of the original code and returning
 	// cross-region
-        mprotect(code_buffer+4096, 4096, PROT_WRITE|PROT_READ);
+  mprotect(code_buffer+4096, 4096, PROT_WRITE|PROT_READ);
 	memcpy(code_buffer+4096,orig_code_patch2,sizeof(orig_code_patch2));
-        mprotect(code_buffer+4096, 4096, PROT_EXEC|PROT_READ);
-        result = code_caller((uintptr_t)code_buffer+4096,2);
-        printf("Result: %d Expected: 1\n", result );
+  mprotect(code_buffer+4096, 4096, PROT_EXEC|PROT_READ);
+  result = ((uint32_t (*)(uint32_t))code_buffer+4096)(2);
+  printf("Result: %d Expected: 1\n", result );
 
 	return 0;
 

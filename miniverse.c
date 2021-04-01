@@ -18,8 +18,7 @@
 #define JCC_REL_NEAR 0x0f
 
 /* Use this to identify targets */
-/* TODO MASK: Restore original masking code */
-#define TARGET_LABEL 0x9b
+#define TARGET_LABEL 0x90
 
 #define RELOC_INVALID 0
 #define RELOC_OFF 1
@@ -67,37 +66,26 @@ typedef struct mv_code_t{
 #endif
 } mv_code_t;
 
-/* TODO MASK: Restore original masking code */
-uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x44\x00";
-//uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
+uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
 #ifdef PUSH_OLD_ADDRESSES
 uint8_t pop_jmp_template[] = "\x87\x04\x24\xf6\x04\x85\x00\x00\x00\x40\x03";
 /* Only here because adding a fixed offset forces me to split this */
-uint8_t pop_jmp_template2[] = "\x0f\x44\x04\x85\x00\x00\x00\x40";
+uint8_t pop_jmp_template2[] = "\x0f\x45\x04\x85\x00\x00\x00\x40";
 uint8_t pop_jmp_imm_template[] = "\x87\x04\x24\x81\xc4\xff\xff\x00\x00";
 #endif
-/* TODO MASK: Restore original masking code */
-uint8_t ret_template_mask[] = "\x83\xe0\xff\x87\x04\x24";
-//uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
+uint8_t ret_template_mask[] = "\x83\xe0\xf0\x87\x04\x24";
 #ifdef PUSH_OLD_ADDRESSES
-uint8_t pop_jmp_template_mask[] = "\x87\x04\x24\x83\xc4\x04\x80\x64\x24\xfc\xff\xff\x64\x24\xfc";
-uint8_t pop_jmp_imm_template_mask[] = "\x80\xa4\x24\xff\xff\xff\xff\xff\xff\xa4\x24\xff\xff\xff\xff";
+uint8_t pop_jmp_template_mask[] = "\x87\x04\x24\x83\xc4\x04\x80\x64\x24\xfc\xf0\xff\x64\x24\xfc";
+// Use disp32 instead of disp8 in "and" instruction to hold 16-bit ret immediate
+uint8_t pop_jmp_imm_template_mask[] = "\x80\xa4\x24\xff\xff\xff\xff\xf0\xff\xa4\x24\xff\xff\xff\xff";
 #endif
 uint8_t indirect_template_before[] = "\x50\x8b";
-/* TODO MASK: Restore original masking code */
-uint8_t indirect_template_after[] = "\xf6\x04\x85\x00\x00\x00\x40\x03\x0f\x44\x04\x85\x00\x00\x00\x40";
-//uint8_t indirect_template_after[] = "\xf6\x00\x03\x0f\x45\x00";
+uint8_t indirect_template_after[] = "\xf6\x04\x85\x00\x00\x00\x40\x03\x0f\x45\x04\x85\x00\x00\x00\x40";
 #ifdef PUSH_OLD_ADDRESSES
-uint8_t indirect_template_mask_push_jmp[] = "\x24\xff\x50\x58\x58\x68\xff\xff\xff\xff\xff\x64\x24\xfc";
+uint8_t indirect_template_mask_push_jmp[] = "\x24\xf0\x50\x58\x58\x68\xff\xff\xff\xff\xff\x64\x24\xfc";
 #endif
-/* TODO MASK: Restore original masking code */
-/* TODO: Why is the AND in long form if there's a shorter form available? */
-uint8_t indirect_template_mask_call[] = "\x25\xff\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
-//uint8_t indirect_template_mask_call[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x54\x24\xf8";
-/* TODO MASK: Restore original masking code */
-/* TODO: Why is the AND in long form if there's a shorter form available? */
-uint8_t indirect_template_mask_jmp[] = "\x25\xff\xff\xff\xff\x50\x58\x58\xff\x64\x24\xf8";
-//uint8_t indirect_template_mask_jmp[] = "\x25\xf0\xff\xff\xff\x50\x58\x58\xff\x64\x24\xf8";
+uint8_t indirect_template_mask_call[] = "\x24\xf0\x50\x58\x58\xff\x54\x24\xf8";
+uint8_t indirect_template_mask_jmp[] = "\x24\xf0\x50\x58\x58\xff\x64\x24\xf8";
 
 bool is_pic(mv_code_t *code, uintptr_t address);
 
@@ -125,8 +113,6 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   size_t trimmed_bytes = 0; // This variable is optional, as it's just used to collect a metric.
   code.offset = 0;
   code.last_safe_offset = 0;
-  /* TODO MASK: Restore original masking code */
-  //code.mask = -1;
   code.mask = -1 ^ (chunk_size-1); // TODO: Mask off top bits in future
   code.base = address;
   page_alloc( &mapping_mem, sizeof(uint32_t) * bytes_size );
@@ -226,10 +212,10 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
       /* Unlike for RELOC_OFF type, we write directly to the target, placing the new base address
          plus the offset directly at that address in the original text section */  
       //printf("%u\t0x%x (%u)\t0x%x\tN/A\t\tN/A\n", rel.type, rel.offset, rel.offset, rel.target);
-      if( code.mapping[rel.target-code.base] != rel.offset ){
+      if( code.mapping[rel.target-code.base] != (rel.offset & code.mask) ){
         printf("WARNING: Mapping (0x%x) and reloc (0x%x) do not agree!\n",
                code.mapping[rel.target-code.base],
-               rel.offset);
+               rel.offset & code.mask);
       }
       //if( r != code.reloc_count-1 && code.relocs[r+1].target - rel.target < 4 ){
 #ifdef DEBUG
@@ -679,8 +665,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     cmovnz eax, [eax]
       (OR cmov(n)z eax,[eax*4+fixed_offset] for fixed lookup offset)
     ---
-    ;and eax, 0x3FFFFFE0
-    and eax, 0xFFFFFFF0   (and al, 0xFF for PUSH_OLD_ADDRESSES + TODO MASK )
+    and al, 0xF0
     mov [esp-4],eax
       OR push eax, pop eax
     pop eax
@@ -876,8 +861,6 @@ void check_target(mv_code_t *code, ss_insn *insn){
     if( insn->id != SS_INS_CALL ){
       assert( (code->offset & ~code->mask) == 0 );
     }else{
-      /* TODO MASK: Restore original masking code */
-      code->code[code->offset & code->mask] = TARGET_LABEL;
       assert( code->code[code->offset & code->mask]==TARGET_LABEL );
       // Cannot perform this assertion without knowing the true length of the
       // rewritten instruction, which is not passed to this function.  This
@@ -895,7 +878,6 @@ void check_target(mv_code_t *code, ss_insn *insn){
        this target address */
     /* Subtract to get to chunk-aligned 0x90 */
     /* Set the bottom 2 bits of offset, which will be masked off. */
-    /* TODO MASK: Restore original masking code */
 #ifdef RECORD_STATS
     target_counter++;
 #endif
@@ -906,14 +888,12 @@ void check_target(mv_code_t *code, ss_insn *insn){
        after we're done rewriting */
     //*(uintptr_t*)((intptr_t)insn->address*4+FIXED_OFFSET) = (uintptr_t)(code->code + (code->offset & code->mask)/*|0x00000003*/);
     gen_reloc(code, RELOC_IND,
-        (code->offset & code->mask)/*|0x00000003*/,
+        (code->offset & code->mask)|0x00000003,
         insn->address);
     /* Set offset of instruction in mapping.  At this point, we have added all
        padding we should add before the start of an instruction, and generated
        any relocation we needed.  This will generate the same value for the
        mapping as for the relocation.  Mask the offset to match the reloc. */
-    /* TODO MASK: Also restore original masking code?
-       None was commented out here, but it should also be done here... */
     code->mapping[insn->address-code->base] = code->offset & code->mask;
   }else{
     /* Set offset of instruction in mapping.  Do not mask the offset, as the
