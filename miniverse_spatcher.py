@@ -8,7 +8,7 @@ after the call is 16-byte aligned.
 '''
 import sys,re
 
-func_label = re.compile('	.type	.*, @function')
+func_label = re.compile('\s+.type	.*,\s*@function')
 first_inst = re.compile('	[^.].*')
 
 # Will not match all indirect calls: only call r32 and call [r32] for now
@@ -18,9 +18,10 @@ first_inst = re.compile('	[^.].*')
 # using knowledge about instruction encoding.  For now, do I just match
 # for a subset of instructions with known lengths and then align accordingly?
 # Pattern for 2-byte call instructions
-call_indirect = re.compile('\s+call\s+[*]?[%]...')
-# Pattern for 6-byte call instructions with 4-byte offset
-call_indirect_offset = re.compile('\s+call\s+\*.+\(%...\)')
+call_indirect = re.compile('\s+call+\s+[*]?[%]...')
+# Pattern for 6-byte calls w/ 4-byte offset or 3-byte calls w/ 1-byte offset 
+# Capture group gets the offset so we can calculate which encoding it will be
+call_indirect_offset = re.compile('\s+call+\s+\*(.+)\(%...\)')
 
 if __name__ == '__main__':
   if len(sys.argv) != 2:
@@ -28,7 +29,7 @@ if __name__ == '__main__':
     sys.exit()
   out_buf = ''
   with open(sys.argv[1]) as f:
-    print('%s invoked for %s')%(sys.argv[0],sys.argv[1])
+    print('%s invoked for %s'%(sys.argv[0],sys.argv[1]))
     lines = f.read().split('\n')
     nop_ind = -1
     for i in range(len(lines)):
@@ -54,8 +55,22 @@ if __name__ == '__main__':
         # We want the instruction after this indirect call to be 16-byte aligned
         out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
       elif call_indirect_offset.match(lines[i]):
+        m = call_indirect_offset.match(lines[i])
+        offset = 4096
+        # Try parsing offset as an int.  If this fails, give up and guess 
+        # that the instruction encoding will be 6 bytes.
+        try:
+          offset = int(m.group(1))
+        except:
+          print("Warning: Unknown encoding length for %s"%m.group(1))
+          pass
         # We want the instruction after this indirect call to be 16-byte aligned
-        out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
+        if offset < 128 and offset >= -128:
+          # Shorter, 3-byte encoding
+          out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnop\n%s\n\tnop\n'%lines[i]
+        else:
+          # Longer, 6-byte encoding
+          out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]
       else:
         # Copy all irrelevant lines without modification
         out_buf += '%s\n'%lines[i]

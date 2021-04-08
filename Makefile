@@ -27,6 +27,9 @@ $(HIGH_ADDR_TEST): all
 
 test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS) $(HIGH_ADDR_TEST)
 
+test-clang: CC=clang
+test-clang: test
+
 install: all
 	cp miniverse.h /usr/local/include/miniverse.h
 	cp libminiverse.a /usr/local/lib/libminiverse.a
