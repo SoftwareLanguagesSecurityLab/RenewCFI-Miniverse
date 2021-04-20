@@ -26,10 +26,17 @@
 uintptr_t fixed_offset = 0x20000000;
 
 #ifdef RECORD_STATS
+#include <time.h>
+
 unsigned long long mmap_counter = 0;
 unsigned long long mprotect_counter = 0;
 unsigned long long handler_counter = 0;
 unsigned long long rewrite_counter = 0;
+
+struct timespec mmap_timer = {0,0};
+struct timespec mprotect_timer = {0,0};
+struct timespec handler_timer = {0,0};
+struct timespec rewriter_timer = {0,0};
 #endif
 
 uintptr_t rewriter_region_start;
@@ -272,11 +279,24 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
 #ifdef RECORD_STATS
 void print_stats(){
   printf("Call mmap: %llu\n", mmap_counter);
+  printf("\t%lu s, %lu ns\n", mmap_timer.tv_sec, mmap_timer.tv_nsec);
   printf("Call mprotect: %llu\n", mprotect_counter);
+  printf("\t%lu s, %lu ns (includes rewriter)\n", mprotect_timer.tv_sec, mprotect_timer.tv_nsec);
   printf("Exception handler: %llu\n", handler_counter);
+  printf("\t%lu s, %lu ns (includes first rewrite)\n", handler_timer.tv_sec, handler_timer.tv_nsec);
   printf("Rewrites: %llu\n", rewrite_counter);
+  printf("\t%lu s, %lu ns total\n", rewriter_timer.tv_sec, rewriter_timer.tv_nsec);
+  printf("\t\t %lu s, %lu ns rewriting + disasm\n", rewrite_and_disasm_timer.tv_sec, rewrite_and_disasm_timer.tv_nsec );
+  printf("\t\t %lu s, %lu ns rewriting\n", just_rewrite_timer.tv_sec, just_rewrite_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns allocating mem\n", realloc_timer.tv_sec, realloc_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns rets\n", gen_ret_timer.tv_sec, gen_ret_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns conds\n", gen_cond_timer.tv_sec, gen_cond_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns unconds\n", gen_uncond_timer.tv_sec, gen_uncond_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns unmodified\n", gen_none_timer.tv_sec, gen_none_timer.tv_nsec );
+  printf("\t\t %lu s, %lu ns patching relocs\n", reloc_patch_timer.tv_sec, reloc_patch_timer.tv_nsec );
   printf("Relocs: %llu\n", relocs_counter);
   printf("Targets: %llu\n", target_counter);
+  printf("Number of code regions: %u\n", num_code_regions);
 }
 #endif
 
@@ -325,6 +345,8 @@ int __wrap_printf(const char * format, ...){
 void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
                   int fd, off_t offset){
 #ifdef RECORD_STATS
+  struct timespec start_time, end_time;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
   mmap_counter++;
 #endif
   /* Busy wait for access; do not allow multiple threads into wrappers
@@ -342,9 +364,19 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
       add_code_region((uintptr_t)real_addr, length);
     } 
     __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
+#ifdef RECORD_STATS
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    mmap_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+    mmap_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
     return real_addr;
   }
   __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+  mmap_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+  mmap_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
   return __real_mmap(addr,length,prot,flags,fd,offset);
 }
 
@@ -354,6 +386,8 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
    permissions changed, even after we may have rewritten it before */
 int __wrap_mprotect(void *addr, size_t len, int prot){
 #ifdef RECORD_STATS
+  struct timespec start_time, end_time;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
   mprotect_counter++;
 #endif
   /* Busy wait for access; do not allow multiple threads into wrappers
@@ -395,6 +429,11 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
       /* Indicate success; permissions for region are now RW regardless of
          original arguments to mprotect intending to make it non-writable */
       __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &end_time);
+      mprotect_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+      mprotect_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
       return 0;
     }
   }else if( (prot & PROT_WRITE) && get_code_region(&region,(uintptr_t)addr) ){
@@ -409,6 +448,11 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
       region->size = len + ((uintptr_t)addr - region->address);
     }
     __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
+#ifdef RECORD_STATS
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    mprotect_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+    mprotect_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
     return __real_mprotect((void*)region->address, region->size, prot);
     /* If the code is being set to writable but not executable,
        AND if the address is in an existing region,
@@ -451,6 +495,11 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
     return result;*/
   }
   __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+  mprotect_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+  mprotect_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
   return __real_mprotect(addr,len,prot);
 }
 
@@ -494,10 +543,17 @@ void rewrite_region(code_region_t* region){
   region->backup = backup_mem;*/
 
 #ifdef RECORD_STATS
+  struct timespec start_time, end_time;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
   rewrite_counter++;
 #endif
   region->mapping = gen_code(orig_code, code_size, region->address,
       (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+  rewriter_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+  rewriter_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
 
   /* Patch old code, since after rewriting, it is out of date.
      TODO: There may be stale pointers into the old rewritten code, so this
@@ -572,6 +628,12 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
   code_region_t* segfault_region;
 
+#ifdef RECORD_STATS
+  struct timespec start_time, end_time;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
+  handler_counter++;
+#endif
+
   /* Check that this segfault did not occur inside the same memory region as
      miniverse.  If it did, exit with a fatal error. */
   if( target >= rewriter_region_start && target < rewriter_region_end ){
@@ -583,10 +645,6 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   }
   
   while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
-
-#ifdef RECORD_STATS
-  handler_counter++;
-#endif
 
   /* Check whether instruction pointer is in a known code region (a region we
      know we need to rewrite because we encountered it in an mmap or mprotect
@@ -654,6 +712,9 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      that have not yet been rewritten.  This is important in case there are
      cross-region jumps! */
   if( !segfault_region->rewritten ){
+#ifdef RECORD_STATS
+    printf("Rewriting in handler!\n");
+#endif
     code_region_t* region = code_regions_mem.address;
     for( size_t i = 0; i < num_code_regions; i++ ){
       if( !region->rewritten ){
@@ -669,4 +730,9 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
       ((uint32_t*)segfault_region->mapping.address)[target-segfault_region->address]);
 
   __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+  handler_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+  handler_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
 }

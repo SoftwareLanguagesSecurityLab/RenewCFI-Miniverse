@@ -3,7 +3,7 @@
 #include <sys/mman.h>
 #include <assert.h>
 
-#define DEBUG_PROGRESS
+//#define DEBUG_PROGRESS
 
 #define DO_RET_LOOKUPS 1
 #define PUSH_OLD_ADDRESSES 1
@@ -26,8 +26,19 @@
 #define RELOC_ABS 3
 
 #ifdef RECORD_STATS
+#include <time.h>
+
 unsigned long long relocs_counter = 0;
 unsigned long long target_counter = 0;
+
+struct timespec rewrite_and_disasm_timer = {0,0};
+struct timespec just_rewrite_timer = {0,0};
+struct timespec reloc_patch_timer = {0,0};
+struct timespec realloc_timer = {0,0};
+struct timespec gen_ret_timer = {0,0};
+struct timespec gen_cond_timer = {0,0};
+struct timespec gen_uncond_timer = {0,0};
+struct timespec gen_none_timer = {0,0};
 #endif
 
 /* TODO: Perhaps we should do two independent passes
@@ -136,10 +147,19 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   printf("[");
   fflush(stdout);
 #endif
+#ifdef RECORD_STATS
+  struct timespec start_time, start_time2, end_time, end_time2;
+#endif
   
   ss_open(SS_MODE_32, false, &handle, bytes, bytes_size, (uint64_t)address);
 
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
+#endif
   while( (result = ss_disassemble(&handle, &insn)) ){
+#ifdef RECORD_STATS
+    clock_gettime(CLOCK_MONOTONIC, &start_time2);
+#endif
     if( result == SS_SUCCESS ){
       //printf("0x%llx: %s\t(%x)\n", insn.address, insn.insn_str, code.offset);
       /* Put off writing to mapping until padding has been added to fit
@@ -172,8 +192,19 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
 #endif
       //gen_insn(&code, insn);
     }
+#ifdef RECORD_STATS
+    clock_gettime(CLOCK_MONOTONIC, &end_time2);
+    just_rewrite_timer.tv_sec += end_time2.tv_sec - start_time2.tv_sec;
+    just_rewrite_timer.tv_nsec += end_time2.tv_nsec - start_time2.tv_nsec;
+#endif
   }
 
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+  rewrite_and_disasm_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+  rewrite_and_disasm_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
+#endif
 #ifdef DEBUG
 printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_size);
 #endif
@@ -259,11 +290,20 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
   printf("]");
   fflush(stdout);
 #endif
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+  reloc_patch_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+  reloc_patch_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
   return mapping_mem;
 }
 
 /* Generate a translated version of an instruction to place into generated code buffer. */
 void gen_insn(mv_code_t* code, ss_insn *insn){
+#ifdef RECORD_STATS
+  struct timespec start_time, end_time;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
+#endif
   /* Expand allocated memory for code to fit additional instructions and padding */
   if( code->offset + (4*code->chunk_size) >= code->code_size ){
     /* Allocate one new page and increase code size to reflect the new size */
@@ -282,16 +322,37 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
       puts("ERROR: Failed to allocate memory for new code");
     }
   }
+#ifdef RECORD_STATS
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+  realloc_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+  realloc_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
   /* Rewrite instruction, using the instruction id to determine what kind
      of instruction it is */
   switch( insn->id ){
     case SS_INS_RET:
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &start_time);
+#endif
       gen_ret(code, insn);
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &end_time);
+      gen_ret_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+      gen_ret_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
       break;
     case SS_INS_JMP:
     case SS_INS_CALL:
       /* generate unconditional control flow */
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &start_time);
+#endif
       gen_uncond(code, insn);
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &end_time);
+      gen_uncond_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+      gen_uncond_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
       break;   
     case SS_INS_JAE:
     case SS_INS_JA:
@@ -313,10 +374,21 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
     case SS_INS_JRCXZ:
     case SS_INS_JS:
       /* generate conditional control flow */
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &start_time);
+#endif
       gen_cond(code, insn);
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &end_time);
+      gen_cond_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+      gen_cond_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
       break;
     // If there is no match, just pass instruction through unmodified
     default:
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &start_time);
+#endif
       gen_padding(code, insn, insn->size); 
       check_target(code, insn);
       /* Special case code for call to PIC, specifically the get_pc_thunk pattern.
@@ -329,6 +401,11 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
         memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
         code->offset += insn->size; // Since insn is not modified, increment by instruction size
       }
+#ifdef RECORD_STATS
+      clock_gettime(CLOCK_MONOTONIC, &end_time);
+      gen_none_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+      gen_none_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+#endif
   }
 #ifdef DO_RET_LOOKUPS
   if( insn->id == SS_INS_CALL ){
