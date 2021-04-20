@@ -528,7 +528,7 @@ void rewrite_region(code_region_t* region){
 
   old_mapping = region->mapping;
 
-  page_alloc(&new_mem, code_size);
+  page_alloc(&new_mem, code_size*16);
 
   /* Free old backup if one is present */
   /*if( region->backup.address != 0 ){

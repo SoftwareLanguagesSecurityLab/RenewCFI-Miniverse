@@ -312,7 +312,7 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
         code->offset + (4*code->chunk_size),
         code->code_size, (uintptr_t)code->code_mem.address);
 #endif
-    if( page_realloc(&code->code_mem, code->code_size+0x1000) ){
+    if( page_realloc(&code->code_mem, code->code_size * 2 ) ){
       code->code = code->code_mem.address;
       code->code_size = code->code_mem.size;
 #ifdef DEBUG
@@ -391,6 +391,7 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
 #endif
       gen_padding(code, insn, insn->size); 
       check_target(code, insn);
+#ifndef PUSH_OLD_ADDRESSES
       /* Special case code for call to PIC, specifically the get_pc_thunk pattern.
          If PIC, we need to change instruction to read the argument passed on the stack
          instead of the return address */
@@ -398,9 +399,12 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
         *(uint32_t*)(code->code+code->offset) = 0x04244c8b; // Encoding of mov ecx,[esp+4]
         code->offset += 4; // Size of new instruction 
       }else{
+#endif
         memcpy(code->code+code->offset, insn->bytes, insn->size); // Copy insn's bytes to gen'd code 
         code->offset += insn->size; // Since insn is not modified, increment by instruction size
+#ifndef PUSH_OLD_ADDRESSES
       }
+#endif
 #ifdef RECORD_STATS
       clock_gettime(CLOCK_MONOTONIC, &end_time);
       gen_none_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
