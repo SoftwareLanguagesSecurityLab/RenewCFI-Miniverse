@@ -937,6 +937,7 @@ void check_target(mv_code_t *code, ss_insn *insn){
 #ifdef DEBUG
     printf("Generating reloc for target @ 0x%x (0x%x)\n", (uintptr_t)(code->code+code->offset), (uintptr_t)(code->offset|0x00000003));
 #endif
+#ifdef DEBUG_ASSERT
     /* At this point the offset had better be chunk-aligned for all non-call
        instructions, and the start of a chunk with a call should be nop. */
     if( insn->id != SS_INS_CALL ){
@@ -949,6 +950,7 @@ void check_target(mv_code_t *code, ss_insn *insn){
       // the length differs wildly from the 5 bytes of a simple direct call.
       //assert( (code->offset & ~code->mask) == (uintptr_t)code->chunk_size-5 );
     }
+#endif
     /* If instruction is a target, not a call, and there is no nop already,
        insert one nop */
     if( insn->id != SS_INS_CALL &&
