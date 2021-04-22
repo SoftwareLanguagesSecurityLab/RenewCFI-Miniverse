@@ -20,6 +20,9 @@
 /* Use this to identify targets */
 #define TARGET_LABEL 0x90
 
+/* Chunk size is statically defined */
+#define CHUNK_SIZE 16
+
 #define RELOC_INVALID 0
 #define RELOC_OFF 1
 #define RELOC_IND 2
@@ -66,7 +69,6 @@ typedef struct mv_code_t{
   uintptr_t base;
   size_t orig_size;
   size_t code_size;
-  uint8_t chunk_size;
   uint32_t offset;
   uint32_t last_safe_offset; // Last offset before the most recent unconditional jump or ret
   uintptr_t mask;
@@ -111,7 +113,7 @@ void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target)
 size_t sort_relocs(mv_code_t *code);
 
 pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
-    uintptr_t *new_address, size_t *new_size, uint8_t chunk_size,
+    uintptr_t *new_address, size_t *new_size,
     bool (*is_target)(uintptr_t address, uint8_t *bytes,
                       uintptr_t code_base, size_t code_size)){
   ss_handle handle;
@@ -124,7 +126,7 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   size_t trimmed_bytes = 0; // This variable is optional, as it's just used to collect a metric.
   code.offset = 0;
   code.last_safe_offset = 0;
-  code.mask = -1 ^ (chunk_size-1); // TODO: Mask off top bits in future
+  code.mask = -1 ^ (CHUNK_SIZE-1); // TODO: Mask off top bits in future
   code.base = address;
   page_alloc( &mapping_mem, sizeof(uint32_t) * bytes_size );
   code.mapping = mapping_mem.address;
@@ -132,7 +134,6 @@ pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
   code.code_mem.address = (void*)(*new_address);
   code.code_mem.size = *new_size;
   code.code_size = *new_size;// Start with however much the caller allocated
-  code.chunk_size = chunk_size;
   code.orig_size = bytes_size; //Capstone decrements the original size variable, so we must save it
   page_alloc( &code.reloc_mem, sizeof(mv_reloc_t) * bytes_size );
   code.relocs = code.reloc_mem.address; //Will re-alloc if more relocs needed
@@ -305,11 +306,11 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
   clock_gettime(CLOCK_MONOTONIC, &start_time);
 #endif
   /* Expand allocated memory for code to fit additional instructions and padding */
-  if( code->offset + (4*code->chunk_size) >= code->code_size ){
+  if( code->offset + (4*CHUNK_SIZE) >= code->code_size ){
     /* Allocate one new page and increase code size to reflect the new size */
 #ifdef DEBUG
     printf("Increasing new code size: %d >= %d (0x%x)\n",
-        code->offset + (4*code->chunk_size),
+        code->offset + (4*CHUNK_SIZE),
         code->code_size, (uintptr_t)code->code_mem.address);
 #endif
     if( page_realloc(&code->code_mem, code->code_size * 2 ) ){
@@ -877,7 +878,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
 }
 
 void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
-  if( new_size > code->chunk_size ){
+  if( new_size > CHUNK_SIZE ){
     printf("WARNING: Size of %d too large to fit in chunk!\n", new_size);
   }
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
@@ -886,26 +887,26 @@ void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size){
     is_target = true;
   }
 #endif
-  /* If we have selected a chunk size that is not zero AND the instruction is not already aligned,
+  /* If the instruction is not already aligned,
      pad to chunk size whenever we encounter either:
        -An instruction that does not evenly fit within a chunk.
        -An instruction determined to be an indirect jump target by the is_target callback
     Fill the padded area with NOP instructions.
   */
-  if( code->chunk_size != 0 && code->offset % code->chunk_size != 0 &&
+  if( code->offset % CHUNK_SIZE != 0 &&
       ( (is_target) ||
-      (code->chunk_size - (code->offset % code->chunk_size) < new_size) ) ){
-    memset(code->code+code->offset, NOP, code->chunk_size - (code->offset % code->chunk_size));
-    code->offset += code->chunk_size - (code->offset % code->chunk_size);
+      (CHUNK_SIZE - (code->offset % CHUNK_SIZE) < new_size) ) ){
+    memset(code->code+code->offset, NOP, CHUNK_SIZE - (code->offset % CHUNK_SIZE));
+    code->offset += CHUNK_SIZE - (code->offset % CHUNK_SIZE);
   }
-  /* If we have a nonzero chunk size, then we need to ensure all call
+  /* We need to ensure all call
      instructions are padded to right before the end of a chunk.
   */
-  if( code->chunk_size != 0 && (insn->id == SS_INS_CALL) &&
-      ( (code->offset + new_size) % code->chunk_size != 0) ){
+  if( (insn->id == SS_INS_CALL) &&
+      ( (code->offset + new_size) % CHUNK_SIZE != 0) ){
     memset(code->code+code->offset, NOP,
-      code->chunk_size - ((code->offset + new_size) % code->chunk_size));
-    code->offset += code->chunk_size - ((code->offset + new_size) % code->chunk_size);
+      CHUNK_SIZE - ((code->offset + new_size) % CHUNK_SIZE));
+    code->offset += CHUNK_SIZE - ((code->offset + new_size) % CHUNK_SIZE);
   }
 }
 
@@ -948,7 +949,7 @@ void check_target(mv_code_t *code, ss_insn *insn){
       // rewritten instruction, which is not passed to this function.  This
       // assertion fails because if the call instruction is an INDIRECT call,
       // the length differs wildly from the 5 bytes of a simple direct call.
-      //assert( (code->offset & ~code->mask) == (uintptr_t)code->chunk_size-5 );
+      //assert( (code->offset & ~code->mask) == (uintptr_t)CHUNK_SIZE-5 );
     }
 #endif
     /* If instruction is a target, not a call, and there is no nop already,

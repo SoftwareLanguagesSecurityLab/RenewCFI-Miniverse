@@ -555,7 +555,7 @@ void rewrite_region(code_region_t* region){
   rewrite_counter++;
 #endif
   region->mapping = gen_code(orig_code, code_size, region->address,
-      (uintptr_t*)&new_mem.address, &new_mem.size, 16, is_target);
+      (uintptr_t*)&new_mem.address, &new_mem.size, is_target);
 #ifdef RECORD_STATS
   clock_gettime(CLOCK_MONOTONIC, &end_time);
   rewriter_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
