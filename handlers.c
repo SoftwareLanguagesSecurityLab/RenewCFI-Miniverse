@@ -287,6 +287,13 @@ void print_stats(){
   printf("Rewrites: %llu\n", rewrite_counter);
   printf("\t%lu s, %lu ns total\n", rewriter_timer.tv_sec, rewriter_timer.tv_nsec);
   printf("\t\t %lu s, %lu ns rewriting + disasm\n", rewrite_and_disasm_timer.tv_sec, rewrite_and_disasm_timer.tv_nsec );
+#ifdef RECORD_DISASM_STATS
+  printf("\t\t\t %lu s, %lu ns overall disasm\n", disasm_timer.tv_sec, disasm_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns new insts\n", new_inst_timer.tv_sec, new_inst_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns old inst, valid seq\n", valid_seq_timer.tv_sec, valid_seq_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns old inst, invalid seq\n", invalid_seq_timer.tv_sec, invalid_seq_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lu ns end seq\n", end_seq_timer.tv_sec, end_seq_timer.tv_nsec );
+#endif
   printf("\t\t %lu s, %lu ns rewriting\n", just_rewrite_timer.tv_sec, just_rewrite_timer.tv_nsec );
   printf("\t\t\t %lu s, %lu ns allocating mem\n", realloc_timer.tv_sec, realloc_timer.tv_nsec );
   printf("\t\t\t %lu s, %lu ns rets\n", gen_ret_timer.tv_sec, gen_ret_timer.tv_nsec );

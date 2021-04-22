@@ -36,7 +36,7 @@ install: all
 	cp miniverse_spatcher.py /usr/local/bin/miniverse_spatcher.py
 
 %.o: %.c
-	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -c $< -o $@
+	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -O2 -c $< -o $@
 
 clean:
 	rm -f libminiversebin libminiverseflat binminiverseentry *.gch *.a *.o *.s test[0-9]-*
