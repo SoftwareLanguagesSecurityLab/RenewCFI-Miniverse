@@ -620,6 +620,26 @@ void rewrite_region(code_region_t* region){
   region->rewritten = true;
 }
 
+void translate_address(void** address){
+  code_region_t* region;
+
+  if( !get_code_region(&region, (uintptr_t)*address) ){
+    /* Don't translate address if it's not recognized */
+    return;
+  }
+  if( !region->rewritten ){
+    printf("Region not yet rewritten in translate_address!\n");
+    return;
+  }
+
+  uintptr_t old_address = (uintptr_t)*address;
+  *address = (void*)((uintptr_t)region->new_address +
+      ((uint32_t*)region->mapping.address)[old_address-region->address]);
+
+}
+
+//bool flippy = false;
+
 /* TODO: refer to REG_EIP using a system header rather than this define */
 #define REG_EIP 14
 /* TODO: refer to REG_ESP using a system header rather than this define */
@@ -634,6 +654,13 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      a region that needs rewriting, rewrite it. */
   uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
   code_region_t* segfault_region;
+
+/*  if( flippy ){
+    flippy = false;
+    return;
+  }else{
+    flippy = true;
+  }*/
 
 #ifdef RECORD_STATS
   struct timespec start_time, end_time;

@@ -20,8 +20,9 @@ first_inst = re.compile('	[^.].*')
 # Pattern for 2-byte call instructions
 call_indirect = re.compile('\s+call+\s+[*]?[%]...')
 # Pattern for 6-byte calls w/ 4-byte offset or 3-byte calls w/ 1-byte offset 
+# (OR 4-byte calls (additional SIB byte!) generated if calling with $esp)
 # Capture group gets the offset so we can calculate which encoding it will be
-call_indirect_offset = re.compile('\s+call+\s+\*(.+)\(%...\)')
+call_indirect_offset = re.compile('\s+call+\s+\*(.+)\(%(...)\)')
 
 if __name__ == '__main__':
   if len(sys.argv) != 2:
@@ -66,8 +67,13 @@ if __name__ == '__main__':
           pass
         # We want the instruction after this indirect call to be 16-byte aligned
         if offset < 128 and offset >= -128:
-          # Shorter, 3-byte encoding
-          out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnop\n%s\n\tnop\n'%lines[i]
+          # Shorter, 3-byte or 4-byte encoding
+          if m.group(2) == 'esp':
+            # 4-byte encoding
+            out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n%s\n\tnop\n'%lines[i]
+          else:
+            # 3-byte encoding
+            out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnopw (%%eax)\n\tnop\n%s\n\tnop\n'%lines[i]
         else:
           # Longer, 6-byte encoding
           out_buf +='\t.align 16\n\tnopw (%%eax)\n\tnopw (%%eax)\n\txchg %%ax,%%ax\n%s\n\tnop\n'%lines[i]

@@ -2,7 +2,7 @@
 extern "C" {
 #endif 
 
-#define RECORD_STATS
+//#define RECORD_STATS
 
 #ifdef RECORD_STATS
 #include <time.h>
@@ -31,6 +31,8 @@ extern void register_handler(bool (*my_is_target)(uintptr_t address,
                                                   uint8_t *bytes,
                                                   uintptr_t code_base,
                                                   size_t code_size));
+
+extern void translate_address(void** address);
 
 pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
     uintptr_t *new_address, size_t *new_size,
