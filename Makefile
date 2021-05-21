@@ -9,7 +9,7 @@ all: miniverse.o handlers.o
 	#nasm -f bin -l entry.lst entry.asm
 
 UNPATCHED_TESTS := brokentest-multiple-regions
-PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions
+PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call
 HIGH_ADDR_TEST := test11-high-addr
 
 $(UNPATCHED_TESTS): all
@@ -39,4 +39,4 @@ install: all
 	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -O2 -c $< -o $@
 
 clean:
-	rm -f libminiversebin libminiverseflat binminiverseentry *.gch *.a *.o *.s test[0-9]-*
+	rm -f libminiversebin libminiverseflat binminiverseentry *.gch *.a *.o *.s test[0-9]*-*

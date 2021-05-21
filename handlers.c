@@ -165,6 +165,21 @@ bool get_code_region(code_region_t** region, uintptr_t address){
   return false;
 }
 
+/* Determine if an address is in any region that the program attempted to set
+   as executable.  Called by rewriter, so needs to be fast.  */
+bool in_code_region(uintptr_t address){
+  size_t i;
+  code_region_t* region = code_regions_mem.address;
+  for( i = 0; i < num_code_regions; i++ ){
+    if( region->address <= address &&
+        region->address + region->size > address ){
+      return true;
+    }
+    region++;
+  }
+  return false;
+}
+
 bool get_specific_segment(uintptr_t addr_in_segment,
                           uintptr_t *segment_start, uintptr_t *segment_end){
   char line[256];

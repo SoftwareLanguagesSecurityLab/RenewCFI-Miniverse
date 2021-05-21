@@ -33,6 +33,7 @@ extern void register_handler(bool (*my_is_target)(uintptr_t address,
                                                   size_t code_size));
 
 extern void translate_address(void** address);
+extern bool in_code_region(uintptr_t address);
 
 pa_entry_t gen_code(const uint8_t* bytes, size_t bytes_size, uintptr_t address,
     uintptr_t *new_address, size_t *new_size,

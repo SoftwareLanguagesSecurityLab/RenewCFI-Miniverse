@@ -100,6 +100,9 @@ uint8_t indirect_template_mask_push_jmp[] = "\x24\xf0\x50\x58\x58\x68\xff\xff\xf
 uint8_t indirect_template_mask_call[] = "\x24\xf0\x50\x58\x58\xff\x54\x24\xf8";
 uint8_t indirect_template_mask_jmp[] = "\x24\xf0\x50\x58\x58\xff\x64\x24\xf8";
 
+/* Call [esp-8] */
+uint8_t indirect_stack_call_template[] = "\xff\x54\x24\xf8";
+
 bool is_pic(mv_code_t *code, uintptr_t address);
 
 void gen_insn(mv_code_t *code, ss_insn *insn);
@@ -636,6 +639,7 @@ inline void gen_cond(mv_code_t *code, ss_insn *insn){
 
 inline void gen_uncond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
+  uintptr_t call_target;
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
@@ -652,6 +656,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
     case CALL_REL_NEAR:
       /* Retrieve jmp target offset and add to relocation table */
       disp = *(int32_t*)(insn->bytes+1);
+      call_target = (uintptr_t)((int32_t)insn->address + 5 + disp);
       /* Special case code for call to PIC, specifically the get_pc_thunk
          pattern. If call to PIC, we need to push original ret address to
          pass to thunk, then after thunk returns, move stack back to where
@@ -660,10 +665,80 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
          for pic because we are ALWAYS pushing the old address.  Pic code should
          work by default in that case. */
 #ifdef PUSH_OLD_ADDRESSES
-      if( *(insn->bytes) == CALL_REL_NEAR ){
+      if( *(insn->bytes) == CALL_REL_NEAR && 
+          in_code_region(call_target) ){
 #else
       if( is_pic(code, insn->address + insn->size + disp) && *(insn->bytes) == CALL_REL_NEAR ){
 #endif
+        /* If target is outside of this specific region, but also in SOME jit
+           region, then generating a reloc won't work.
+           Instead change the call to an indirect call and rewrite
+           that */
+        if( call_target < code->base || 
+            call_target > code->base+code->orig_size){
+          /* Generate an indirect call that performs a lookup of this address
+             by putting the call target just outside the stack.
+             This call will then be rewritten to both perform a lookup and
+             push the old address on the stack so that our rewritten return
+             instructions won't try to read from unallocated memory trying to
+             look up new addresses. */
+          gen_padding(code, insn, 11, false);
+          check_target(code, insn, is_target);
+          *(code->code+code->offset+0) = 0x83; // sub esp,4
+          *(code->code+code->offset+1) = 0xec; // sub esp,4
+          *(code->code+code->offset+2) = 0x04; // sub esp,4
+          *(code->code+code->offset+3) = 0x68; // push imm32
+          *(uint32_t*)(code->code+code->offset+4) = call_target;
+          *(code->code+code->offset+8) = 0x83; // add esp,8
+          *(code->code+code->offset+9) = 0xc4; // add esp,8
+          *(code->code+code->offset+10) = 0x08; // add esp,8
+          code->offset += 11;
+
+          /* Essentially generate a very specific instance of indirect call */
+
+          gen_padding(code, insn, 5, false);
+          *(code->code+code->offset++) = indirect_template_before[0];
+          *(code->code+code->offset++) = indirect_template_before[1];
+          /* Write our custom memory addressing encoding, representing
+             eax, [esp-4] */
+          *(code->code+code->offset++) = 0x44; // MOD/RM
+          *(code->code+code->offset++) = 0x24; // SIB
+          *(code->code+code->offset++) = 0xfc; // Single-byte displacement
+
+          gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target);
+          memcpy( code->code+code->offset, indirect_template_after,
+                  sizeof(indirect_template_after)-1);
+          /* Patch fixed offset value into instruction encodings */
+          *(uintptr_t*)(code->code+code->offset+3) = fixed_offset;
+          *(uintptr_t*)(code->code+code->offset+12) = fixed_offset;
+          code->offset += sizeof(indirect_template_after)-1;
+
+          gen_padding( code, insn,
+                       sizeof(indirect_template_mask_push_jmp)-1, is_target);
+          memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
+                  sizeof(indirect_template_mask_push_jmp)-1);
+          /* Patch template with return address from old code */
+          *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
+          code->offset += sizeof(indirect_template_mask_push_jmp)-1;
+
+          code->last_safe_offset = code->offset;
+          code->last_safe_reloc = code->reloc_count;
+
+          /*ss_insn tmp_insn;
+          tmp_insn.id = SS_INS_CALL;
+          tmp_insn.address = insn->address;
+          */
+          /* Our old instruction was 5 bytes, while our new one is 4.  We need
+             to use the old size to get the right value pushed on the stack.
+          */
+          /*
+          tmp_insn.size = 5;
+          tmp_insn.bytes = indirect_stack_call_template;
+          tmp_insn.insn_str = NULL;
+          gen_indirect(code, &tmp_insn);
+          */
+          break;
+        }
         /* Accommodate extra 5 bytes from push, but since this is a call, do
            not include bytes from add; the padding will align the call to the
            end of a chunk, so the add
@@ -705,9 +780,9 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       code->offset += 5;
       /* If PUSH_OLD_ADDRESSES is set and we are here, then the instruction is
          definitely a jmp and therefore we don't need to bother checking */ 
-#ifndef PUSH_OLD_ADDRESSES
+//#ifndef PUSH_OLD_ADDRESSES
       if( *(insn->bytes) == JMP_REL_NEAR )
-#endif
+//#endif
       {
         code->last_safe_offset = code->offset;
         code->last_safe_reloc = code->reloc_count;
@@ -793,13 +868,13 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
            the 1-byte displacement is probably enough, but we'll be cautious */
         gen_padding(code, insn, sizeof(indirect_template_before)-1 +
                                 insn->size-1+3, is_target);
-        new_disp = insn->bytes[3]+0x04;
+        new_disp = (int8_t)insn->bytes[3]+0x04;
         break;
       case 0x84:
         /* This already has a 4-byte displacement, so generate normal padding */
         gen_padding(code, insn, sizeof(indirect_template_before)-1 +
                                 insn->size-1, is_target);
-        new_disp = *(uint32_t*)(insn->bytes+3)+0x04;
+        new_disp = *(int32_t*)(insn->bytes+3)+0x04;
         break;
     }
     check_target(code, insn, is_target);
