@@ -639,106 +639,93 @@ inline void gen_cond(mv_code_t *code, ss_insn *insn){
 
 inline void gen_uncond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
-  uintptr_t call_target;
+  uintptr_t target_addr;
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
   
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
   switch( *(insn->bytes) ){
     /* Jump with 4-byte offset (5-byte instruction) */
     case JMP_REL_NEAR:
-      /* Save last safe data before the CALL_REL_NEAR case because code after a call is executed */
-      /* TODO: I think that this makes an incorrect assumption about the
-         number of relocations, as it's possible for 2 to be generated,
-	 AND actually the code offset can be increased by much more than 5
-         due to alignment.  I think this must be moved AFTER code->offset and
-         code->reloc_count have been set. */
-    /* Call with 4-byte offset (5-byte instruction) - Same behavior as jump, so fall through */
+      disp = *(int32_t*)(insn->bytes+1);
+      target_addr = (uintptr_t)((int32_t)insn->address + 5 + disp);
+      if( (target_addr < code->base || 
+          target_addr >= code->base+code->orig_size) &&
+          in_code_region(target_addr) ){
+        /* If direct jump is to a JIT region that isn't the current one being
+           rewritten, change to indirect jump that performs a lookup of
+           this address by putting the jump target just outside the stack. */
+        gen_padding(code, insn, 11, is_target);
+        check_target(code, insn, is_target);
+        *(code->code+code->offset+0) = 0x83; // sub esp,4
+        *(code->code+code->offset+1) = 0xec; // sub esp,4
+        *(code->code+code->offset+2) = 0x04; // sub esp,4
+        *(code->code+code->offset+3) = 0x68; // push imm32
+        *(uint32_t*)(code->code+code->offset+4) = target_addr;
+        *(code->code+code->offset+8) = 0x83; // add esp,8
+        *(code->code+code->offset+9) = 0xc4; // add esp,8
+        *(code->code+code->offset+10) = 0x08; // add esp,8
+        code->offset += 11;
+
+        /* Essentially generate a very specific instance of indirect jump */
+
+        gen_padding(code, insn, 5, false);
+        *(code->code+code->offset++) = indirect_template_before[0];
+        *(code->code+code->offset++) = indirect_template_before[1];
+        /* Write our custom memory addressing encoding, representing
+           eax, [esp-4] */
+        *(code->code+code->offset++) = 0x44; // MOD/RM
+        *(code->code+code->offset++) = 0x24; // SIB
+        *(code->code+code->offset++) = 0xfc; // Single-byte displacement
+
+        gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target);
+        memcpy( code->code+code->offset, indirect_template_after,
+                sizeof(indirect_template_after)-1);
+        /* Patch fixed offset value into instruction encodings */
+        *(uintptr_t*)(code->code+code->offset+3) = fixed_offset;
+        *(uintptr_t*)(code->code+code->offset+12) = fixed_offset;
+        code->offset += sizeof(indirect_template_after)-1;
+
+        gen_padding( code, insn,
+                     sizeof(indirect_template_mask_jmp)-1, is_target);
+        memcpy( code->code+code->offset, indirect_template_mask_jmp,
+                sizeof(indirect_template_mask_jmp)-1);
+        code->offset += sizeof(indirect_template_mask_jmp)-1;
+
+        code->last_safe_offset = code->offset;
+        code->last_safe_reloc = code->reloc_count;
+
+        break;
+      }
+      gen_padding(code, insn, 5, is_target); 
+      check_target(code, insn, is_target);
+      *(code->code+code->offset) = *(insn->bytes);
+      /* Relocation target is instruction address + instruction length +
+         displacement */
+      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
+      code->offset += 5;
+      code->last_safe_offset = code->offset;
+      code->last_safe_reloc = code->reloc_count;
+      break;
+    /* Call with 4-byte offset (5-byte instruction) */
     case CALL_REL_NEAR:
       /* Retrieve jmp target offset and add to relocation table */
       disp = *(int32_t*)(insn->bytes+1);
-      call_target = (uintptr_t)((int32_t)insn->address + 5 + disp);
-      /* Special case code for call to PIC, specifically the get_pc_thunk
-         pattern. If call to PIC, we need to push original ret address to
-         pass to thunk, then after thunk returns, move stack back to where
-         it was before */
+      target_addr = (uintptr_t)((int32_t)insn->address + 5 + disp);
       /* If PUSH_OLD_ADDRESSES is defined, we don't need special case handling
          for pic because we are ALWAYS pushing the old address.  Pic code should
          work by default in that case. */
 #ifdef PUSH_OLD_ADDRESSES
-      if( *(insn->bytes) == CALL_REL_NEAR && 
-          in_code_region(call_target) ){
+      if( target_addr >= code->base &&
+          target_addr < code->base+code->orig_size ){
 #else
+      /* Special case code for call to PIC, specifically the get_pc_thunk
+         pattern. If call to PIC, we need to push original ret address to
+         pass to thunk, then after thunk returns, move stack back to where
+         it was before */
       if( is_pic(code, insn->address + insn->size + disp) && *(insn->bytes) == CALL_REL_NEAR ){
 #endif
-        /* If target is outside of this specific region, but also in SOME jit
-           region, then generating a reloc won't work.
-           Instead change the call to an indirect call and rewrite
-           that */
-        if( call_target < code->base || 
-            call_target > code->base+code->orig_size){
-          /* Generate an indirect call that performs a lookup of this address
-             by putting the call target just outside the stack.
-             This call will then be rewritten to both perform a lookup and
-             push the old address on the stack so that our rewritten return
-             instructions won't try to read from unallocated memory trying to
-             look up new addresses. */
-          gen_padding(code, insn, 11, false);
-          check_target(code, insn, is_target);
-          *(code->code+code->offset+0) = 0x83; // sub esp,4
-          *(code->code+code->offset+1) = 0xec; // sub esp,4
-          *(code->code+code->offset+2) = 0x04; // sub esp,4
-          *(code->code+code->offset+3) = 0x68; // push imm32
-          *(uint32_t*)(code->code+code->offset+4) = call_target;
-          *(code->code+code->offset+8) = 0x83; // add esp,8
-          *(code->code+code->offset+9) = 0xc4; // add esp,8
-          *(code->code+code->offset+10) = 0x08; // add esp,8
-          code->offset += 11;
-
-          /* Essentially generate a very specific instance of indirect call */
-
-          gen_padding(code, insn, 5, false);
-          *(code->code+code->offset++) = indirect_template_before[0];
-          *(code->code+code->offset++) = indirect_template_before[1];
-          /* Write our custom memory addressing encoding, representing
-             eax, [esp-4] */
-          *(code->code+code->offset++) = 0x44; // MOD/RM
-          *(code->code+code->offset++) = 0x24; // SIB
-          *(code->code+code->offset++) = 0xfc; // Single-byte displacement
-
-          gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target);
-          memcpy( code->code+code->offset, indirect_template_after,
-                  sizeof(indirect_template_after)-1);
-          /* Patch fixed offset value into instruction encodings */
-          *(uintptr_t*)(code->code+code->offset+3) = fixed_offset;
-          *(uintptr_t*)(code->code+code->offset+12) = fixed_offset;
-          code->offset += sizeof(indirect_template_after)-1;
-
-          gen_padding( code, insn,
-                       sizeof(indirect_template_mask_push_jmp)-1, is_target);
-          memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
-                  sizeof(indirect_template_mask_push_jmp)-1);
-          /* Patch template with return address from old code */
-          *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
-          code->offset += sizeof(indirect_template_mask_push_jmp)-1;
-
-          code->last_safe_offset = code->offset;
-          code->last_safe_reloc = code->reloc_count;
-
-          /*ss_insn tmp_insn;
-          tmp_insn.id = SS_INS_CALL;
-          tmp_insn.address = insn->address;
-          */
-          /* Our old instruction was 5 bytes, while our new one is 4.  We need
-             to use the old size to get the right value pushed on the stack.
-          */
-          /*
-          tmp_insn.size = 5;
-          tmp_insn.bytes = indirect_stack_call_template;
-          tmp_insn.insn_str = NULL;
-          gen_indirect(code, &tmp_insn);
-          */
-          break;
-        }
+        /* If this is a call within this same region, transform to push the
+           old return address and direct jump to address in this region */
         /* Accommodate extra 5 bytes from push, but since this is a call, do
            not include bytes from add; the padding will align the call to the
            end of a chunk, so the add
@@ -769,24 +756,74 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         code->last_safe_reloc = code->reloc_count;
         break;
       }
+      /* If target is outside of this specific region, but also in SOME jit
+         region, then generating a reloc won't work.
+         Instead change the call to an indirect call and rewrite
+         that */
+      if( in_code_region(target_addr) ){
+        /* Generate an indirect call that performs a lookup of this address
+           by putting the call target just outside the stack.
+           This call will then be rewritten to both perform a lookup and
+           push the old address on the stack so that our rewritten return
+           instructions won't try to read from unallocated memory trying to
+           look up new addresses. */
+        gen_padding(code, insn, 11, is_target);
+        check_target(code, insn, is_target);
+        *(code->code+code->offset+0) = 0x83; // sub esp,4
+        *(code->code+code->offset+1) = 0xec; // sub esp,4
+        *(code->code+code->offset+2) = 0x04; // sub esp,4
+        *(code->code+code->offset+3) = 0x68; // push imm32
+        *(uint32_t*)(code->code+code->offset+4) = target_addr;
+        *(code->code+code->offset+8) = 0x83; // add esp,8
+        *(code->code+code->offset+9) = 0xc4; // add esp,8
+        *(code->code+code->offset+10) = 0x08; // add esp,8
+        code->offset += 11;
+
+        /* Essentially generate a very specific instance of indirect call */
+
+        gen_padding(code, insn, 5, false);
+        *(code->code+code->offset++) = indirect_template_before[0];
+        *(code->code+code->offset++) = indirect_template_before[1];
+        /* Write our custom memory addressing encoding, representing
+           eax, [esp-4] */
+        *(code->code+code->offset++) = 0x44; // MOD/RM
+        *(code->code+code->offset++) = 0x24; // SIB
+        *(code->code+code->offset++) = 0xfc; // Single-byte displacement
+
+        gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target);
+        memcpy( code->code+code->offset, indirect_template_after,
+                sizeof(indirect_template_after)-1);
+        /* Patch fixed offset value into instruction encodings */
+        *(uintptr_t*)(code->code+code->offset+3) = fixed_offset;
+        *(uintptr_t*)(code->code+code->offset+12) = fixed_offset;
+        code->offset += sizeof(indirect_template_after)-1;
+
+        gen_padding( code, insn,
+                     sizeof(indirect_template_mask_push_jmp)-1, is_target);
+        memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
+                sizeof(indirect_template_mask_push_jmp)-1);
+        /* Patch template with return address from old code */
+        *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
+        code->offset += sizeof(indirect_template_mask_push_jmp)-1;
+
+        code->last_safe_offset = code->offset;
+        code->last_safe_reloc = code->reloc_count;
+
+        break;
+      }
+      /* The default if none of the previous conditions apply:
+         this instruction must be calling a non-jit region, so just leave
+         it as a direct call and push a new return address */
       gen_padding(code, insn, 5, is_target); 
       check_target(code, insn, is_target);
       *(code->code+code->offset) = *(insn->bytes);
-      //disp = code->mapping[insn->address+disp-code->base] - code->offset;
-      //memcpy(code->code+code->offset+1, disp, 4);
-      //printf("Gen: %s\t(%llx + 5 + %x)\n", insn->insn_str, insn->address, disp);
-      /* Relocation target is instruction address + instruction length + displacement */
+      /* Relocation target is instruction address + instruction length +
+         displacement */
       gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
       code->offset += 5;
-      /* If PUSH_OLD_ADDRESSES is set and we are here, then the instruction is
-         definitely a jmp and therefore we don't need to bother checking */ 
-//#ifndef PUSH_OLD_ADDRESSES
-      if( *(insn->bytes) == JMP_REL_NEAR )
-//#endif
-      {
-        code->last_safe_offset = code->offset;
-        code->last_safe_reloc = code->reloc_count;
-      }
+      /* TODO: Are we safe with not marking this as a safe offset? */
+      //code->last_safe_offset = code->offset;
+      //code->last_safe_reloc = code->reloc_count;
       break;
     /* Jump with 1-byte offset (2-byte instruction) */
     case JMP_REL_SHORT:
