@@ -1,31 +1,49 @@
-MUSL_PATH = ~/git/musl/lib
+# Don't use musl due to argument size mismatch for mmap wrapper
+#MUSL_PATH = ~/git/musl/lib
 
-all: mapper.o
-	$(AR) -rsc libminiverse.a mapper.o
-	$(CC) -m32 -g driver.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver
-	$(CC) -m32 -g driver2.c libminiverse.a -Ltests/ -ltest /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver2
-	$(CC) -m32 -g driver3.c handlers.c libminiverse.a -Ltests/ -ltest /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver3
-	$(CC) -m32 -g driver4.c inittester.c -Ltests/ -ltest -o driver4
-	$(CC) -m32 -g driver5.c handlers.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o driver5
-	# No hooking version (to test without rewriting anything)
-	#$(CC) -m32 -g driver5.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a -o driver5
-	$(CC) -m32 -g driver6.c inittester.c -o driver6
-	# Clang is not properly generating PIC for my function pointer!  This breaks the code when it
-	# is moved!
-	#$(CC) -m32 -g -fPIC -fPIE -pie -shared -static -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a handlers.c $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -o libminiversebin
-	$(CC) -m32 -g -fPIE -shared -static -pie -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a handlers.c $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -Wl,-wrap=printf -o libminiversebin
-	# gcc correctly generates PIC for the function pointer I am passing as the handler, but
-	#I can't compile with gcc because it generates plt entries and calls through those EVEN
-	# WITHIN THE SAME BINARY, as everything is supposed to be statically linked!
-	# It has to try to handle lazy binding with the GOT or something, and so it breaks things
-	#$(CC) -m32 -g -fPIC -shared -static -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis32.a /usr/lib/libcapstone32.a handlers.c $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -o libminiversebin
+
+all: miniverse.o handlers.o
+	$(AR) -rsc libminiverse.a miniverse.o handlers.o
+	#$(CC) -m32 -Wall -Wextra -g -fPIE -shared -static -pie -nostdlib dummy.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a $(MUSL_PATH)/libc.a -lgcc -Wl,-wrap=mmap -Wl,-wrap=mprotect -o libminiversebin
+	#$(CC) -m32 -Wall -Wextra -g bpatch.c inittester.c -o bpatch
+	#nasm -f bin -l entry.lst entry.asm
+
+standalone: all
+	$(CC) -m32 -fPIC -fPIE -static -g -I. stub.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@ 
+
+UNPATCHED_TESTS := brokentest-multiple-regions
+PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call
+HIGH_ADDR_TEST := test11-high-addr
+STANDALONE_TEST := test-standalone
+
+$(UNPATCHED_TESTS): all
+	$(CC) -m32 -g -I. tests/$@.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@
+
+$(PATCHED_TESTS): all
+	$(CC) -m32 -g -I. tests/$@.c -S -o $@.s
+	python miniverse_spatcher.py $@.s
+	$(CC) -m32 -g $@.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@
+
+$(HIGH_ADDR_TEST): all
+	$(CC) -m32 -g -I. tests/$@.c -S -o $@.s
+	python miniverse_spatcher.py $@.s
+	$(CC) -m32 -g $@.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -Wl,-Ttext-segment,0xd0000000 -o $@
+
+$(STANDALONE_TEST): standalone
+	$(CC) -m32 -g -I. tests/$@.c -o $@
+
+test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS) $(HIGH_ADDR_TEST) $(STANDALONE_TEST)
+
+test-clang: CC=clang
+test-clang: test
 
 install: all
 	cp miniverse.h /usr/local/include/miniverse.h
 	cp libminiverse.a /usr/local/lib/libminiverse.a
+	cp miniverse_spatcher.py /usr/local/bin/miniverse_spatcher.py
 
 %.o: %.c
-	$(CC) -m32 -fPIE -shared -g -c $< -o $@
+	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -O2 -c $< -o $@
 
 clean:
-	rm -f driver *.gch *.a *.o
+	rm -f libminiversebin libminiverseflat binminiverseentry *.gch *.a *.o *.s test[0-9]*-*
