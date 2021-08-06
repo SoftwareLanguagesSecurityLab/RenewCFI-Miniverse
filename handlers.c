@@ -226,6 +226,26 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
   return true;
 }
 
+bool find_segment_with_main(uintptr_t* segment_start, uintptr_t* segment_end){
+  /* For now, simply find the first region in /proc/self/maps that is r-x.
+     This is not going to be always correct. */
+  char line[256];
+  uintptr_t region_start,region_end;
+  FILE* f = fopen("/proc/self/maps", "r");
+  while( !feof( f ) ){
+    fgets(line, 256, f);
+    region_start = strtoul(line, NULL,16);
+    region_end = strtoul(line+9,NULL,16);
+    if( line[18] == 'r' && line[19] == '-' && line[20] == 'x' ){
+      *segment_start = region_start;
+      *segment_end = region_end;
+      fclose(f);
+      return true;
+    }
+  }
+  return false;
+}
+
 void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
   uintptr_t caller_table_start;
   uintptr_t caller_table_end;
@@ -233,16 +253,20 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
 
   if( !get_specific_segment(calling_addr,
                             &caller_table_start, &caller_table_end) ){
-    printf("FATAL ERROR: Couldn't find segment for address 0x%x\n",
+    printf("WARNING: Couldn't find segment for calling address 0x%x\n",
            calling_addr);
-    _exit(EXIT_FAILURE);
+    printf("JIT code may have been entered via JMP instead of CALL.\n");
+    if( !find_segment_with_main(&caller_table_start, &caller_table_end) ){
+      printf("FATAL ERROR: Could not find r-x segment in memory maps!\n"); 
+      _exit(EXIT_FAILURE);
+    }
   }
 
   /* Try offsets spanning essentially the entire address range.
      If there is not a large empty region, then we simply can't allocate
      the memory we need.*/
   for( i = 0; i < 16; i++ ){
-    if( is_proposed_range_valid(segfault_addr*4+fixed_offset-0x800000,
+    if( is_proposed_range_valid(segfault_addr*4+fixed_offset-0x2000000*4,
                                 segfault_addr*4+fixed_offset+0x2000000*4) &&
         is_proposed_range_valid(caller_table_start*4+fixed_offset,
                                 caller_table_start*4+fixed_offset + 
@@ -743,14 +767,14 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
     /* Add extra buffer space before start of region for new regions that
        could be allocated at a lower address than the initial region */
     void* mapped_addr = __real_mmap(
-        (void*)(segfault_region->address*4+fixed_offset-0x800000),
-        0x2000000*4+0x800000,PROT_WRITE|PROT_READ,
+        (void*)(segfault_region->address*4+fixed_offset-0x2000000*4),
+        0x2000000*4+0x2000000*4,PROT_WRITE|PROT_READ,
         MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
     if( mapped_addr == MAP_FAILED ){
       printf("FATAL ERROR: Could not map fixed offset region 0x%x-0x%x\n",
-             (segfault_region->address*4+fixed_offset-0x800000),
-             (segfault_region->address*4+fixed_offset-0x800000)+
-                 0x2000000*4+0x800000);
+             (segfault_region->address*4+fixed_offset-0x2000000*4),
+             (segfault_region->address*4+fixed_offset-0x2000000*4)+
+                 0x2000000*4+0x2000000*4);
       _exit(EXIT_FAILURE);
     }
 
