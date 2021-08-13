@@ -22,6 +22,7 @@
 #include <ucontext.h>
 #include <sys/ucontext.h> // For hardware-specific registers (TODO: Does not work as expected!)
 #include <unistd.h>
+#include <fcntl.h>
 
 uintptr_t fixed_offset = 0x20000000;
 
@@ -180,23 +181,63 @@ bool in_code_region(uintptr_t address){
   return false;
 }
 
+/* Get a single line from a file.  Lines should not exceed 255 characters.  */
+bool file_get_line(char* buf, size_t size, int fd){
+  for( size_t i = 0; i < size-1; i++){
+    if( read(fd, buf, 1) == 0 ){
+      buf++;
+      *buf = '\0';
+      return false;
+    }
+    if( *buf == '\n' ){
+      buf++;
+      *buf = '\0';
+      return true;
+    }
+    buf++;
+  }
+  *buf = '\0';
+  return true;
+}
+
+/* Implement a subset of strtoul's functionality to avoid
+ * dynamic memory allocations */
+/* Only implements hexadecimal, and base/str_end are ignored */
+unsigned long my_strtoul(char* str, char **str_end, int base){
+  (void)str_end;
+  (void)base;
+  unsigned long value = 0;
+  char c = *str++;
+  while( (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ){
+    value <<= 4;
+    if( c >= '0' && c <= '9' ){
+      value += c - '0';
+    }else if( c >= 'a' && c <= 'f' ){
+      value += 10 + (c - 'a');
+    }
+    c = *str++;
+  }
+  return value;
+}
+
 bool get_specific_segment(uintptr_t addr_in_segment,
                           uintptr_t *segment_start, uintptr_t *segment_end){
   char line[256];
   uintptr_t region_start,region_end;
-  FILE* f = fopen("/proc/self/maps", "r");
-  while( !feof( f ) ){
-    fgets(line, 256, f);
-    region_start = strtoul(line, NULL,16);
-    region_end = strtoul(line+9,NULL,16);
+  int f = open("/proc/self/maps", O_RDONLY);
+  bool done = false;
+  while( !done ){
+    done = !file_get_line(line, 256, f);
+    region_start = my_strtoul(line, NULL,16);
+    region_end = my_strtoul(line+9,NULL,16);
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
       *segment_start = region_start;
       *segment_end = region_end;
-      fclose(f);
+      close(f);
       return true;
     }
   }
-  fclose(f);
+  close(f);
   return false;
 }
 
@@ -207,22 +248,23 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
     printf("ALERT: I REALLY don't like 0x%x-0x%x\n", range_start, range_end);
     return false;
   }
-  FILE* f = fopen("/proc/self/maps", "r");
-  while( !feof( f ) ){
-    fgets(line, 256, f);
+  int f = open("/proc/self/maps", O_RDONLY);
+  bool done = false;
+  while( !done ){
+    done = !file_get_line(line, 256, f);
     /* Extract region start and end addresses, and check if
        memory region falls within given range.  If so, then the
        range is not a valid candidate for new mmap */
-    region_start = strtoul(line, NULL,16);
-    region_end = strtoul(line+9,NULL,16);
+    region_start = my_strtoul(line, NULL,16);
+    region_end = my_strtoul(line+9,NULL,16);
     if( (region_start >= range_start && region_start <= range_end) ||
         (region_end >= range_start && region_end <= range_end) ){
-      fclose(f);
+      close(f);
       printf("ALERT: I don't like 0x%x-0x%x\n", range_start, range_end);
       return false;
     }
   }
-  fclose(f);
+  close(f);
   return true;
 }
 
@@ -231,15 +273,16 @@ bool find_segment_with_main(uintptr_t* segment_start, uintptr_t* segment_end){
      This is not going to be always correct. */
   char line[256];
   uintptr_t region_start,region_end;
-  FILE* f = fopen("/proc/self/maps", "r");
-  while( !feof( f ) ){
-    fgets(line, 256, f);
-    region_start = strtoul(line, NULL,16);
-    region_end = strtoul(line+9,NULL,16);
+  int f = open("/proc/self/maps", O_RDONLY);
+  bool done = false;
+  while( !done ){
+    done = !file_get_line(line, 256, f);
+    region_start = my_strtoul(line, NULL,16);
+    region_end = my_strtoul(line+9,NULL,16);
     if( line[18] == 'r' && line[19] == '-' && line[20] == 'x' ){
       *segment_start = region_start;
       *segment_end = region_end;
-      fclose(f);
+      close(f);
       return true;
     }
   }
@@ -283,12 +326,13 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
 void mirror_specific_segment(uintptr_t addr_in_segment){
   char line[256];
   uintptr_t region_start,region_end,i;
-  FILE* f = fopen("/proc/self/maps", "r");
+  int f = open("/proc/self/maps", O_RDONLY);
   void* mapped_addr;
-  while( !feof( f ) ){
-    fgets(line, 256, f);
-    region_start = strtoul(line, NULL,16);
-    region_end = strtoul(line+9,NULL,16);
+  bool done = false;
+  while( !done ){
+    done = !file_get_line(line, 256, f);
+    region_start = my_strtoul(line, NULL,16);
+    region_end = my_strtoul(line+9,NULL,16);
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
       /* Map a memory region at a fixed offset from the code with a duplicate
        * of the code contents */
@@ -308,11 +352,11 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
       for( i = region_start; i < region_end; i++ ){
         *(uint8_t*)(i*4+fixed_offset) = *(uint8_t*)i;
       }
-      fclose(f);
+      close(f);
       return;
     }
   }
-  fclose(f);
+  close(f);
 }
 
 #ifdef RECORD_STATS

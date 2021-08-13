@@ -9,7 +9,7 @@ all: miniverse.o handlers.o
 	#nasm -f bin -l entry.lst entry.asm
 
 standalone: all
-	$(CC) -m32 -fPIC -fPIE -static -g -I. stub.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@ 
+	$(CC) -Wl,-Ttext-segment=0xdeadb000 -m32 -static-pie -fPIE -g -I. stub.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@ 
 
 UNPATCHED_TESTS := brokentest-multiple-regions
 PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call
@@ -30,7 +30,9 @@ $(HIGH_ADDR_TEST): all
 	$(CC) -m32 -g $@.s libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -Wl,-Ttext-segment,0xd0000000 -o $@
 
 $(STANDALONE_TEST): standalone
-	$(CC) -m32 -g -I. tests/$@.c -o $@
+	$(CC) -m32 -g -I. tests/$@.c -S -o $@.s
+	python miniverse_spatcher.py $@.s
+	$(CC) -m32 -g -I. $@.s -o $@
 
 test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS) $(HIGH_ADDR_TEST) $(STANDALONE_TEST)
 

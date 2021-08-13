@@ -12,6 +12,7 @@ Test loading in miniverse as a standalone binary blob
 #include <sys/stat.h>
 
 #include <assert.h>
+#include <errno.h>
 
 /* Simple example of a function prologue to test target alignment */
 uint8_t prologue1[] = {"\x55\x89\xe5"}; // push ebp; mov ebp, esp 
@@ -48,40 +49,63 @@ int main(int argc, char** argv){
     abort();
   }
 
-  /* These addresses may vary if miniverse is altered at all */
-  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xa6554, PROT_READ|PROT_EXEC,
-                            MAP_SHARED,fd,0);
+  /* These addresses will vary if miniverse is altered at all,
+   * and will need to be changed */
+  /* Code segment */
+  /* (length is starting offset plus memory size of third program header) */
+  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xaf999, PROT_READ|PROT_EXEC,
+                            MAP_PRIVATE,fd,0);
   if( mini_exec != (uint8_t*)0xdeadb000 ){
-    fprintf( stderr, "Error: Could not mmap executable miniverse region.\n" );
+    fprintf( stderr, "Error %d: Could not mmap executable miniverse region.\n", errno );
     abort();
   }
   
 
-  /* 0xdeadb000 + 0xa6680 = 0xdeb81680 */
-  /* 0x105d0 */
-  uint8_t *mini_data = mmap((void*)0xdeb81680, 0xf898, PROT_READ|PROT_WRITE,
-                            MAP_SHARED,fd,0xa6680);
-  if( mini_data != (uint8_t*)0xdeb81680 ){
-    fprintf( stderr, "Error: Could not mmap miniverse data region.\n" );
+  /* data segment */
+  /* (base address is virtual addr of 4th program header rounded down to the
+   * nearest page, and length is enough to cover that + the DYNAMIC segment) */
+  uint8_t *mini_data = mmap((void*)0xdeb8c000, 0x11000, PROT_READ|PROT_WRITE,
+                            MAP_PRIVATE,fd,0xb0000);
+  if( mini_data != (uint8_t*)0xdeb8c000 ){
+    fprintf( stderr, "Error %d: Could not mmap miniverse data region.\n", errno );
     abort();
   }
 
-  //register_handler(&my_is_target);
+  /* Clear bss section */
+  /* Starting offset is the base address of the data segment + FileSiz */
+  /* Length is the ending address of data segment - starting addr of memset */
+  memset((void*)0xdeb9b9b8, 0, 0x1648);
 
-	uint8_t orig_code[] = "\x8b\x44\x24\x04\x83\xf8\x00\x74\x14\xb8\x19\x00\x00\x07\xc3\x6d\x6f\x64\x65\x3a\x20\x25\x64\x0a\x00\x25\x73\x0a\x00\xb8\x0f\x00\x00\x07\xc3\x90\xeb\xfe\xe9\xff\xff\xff\xfe";
+  //bool* miniverse_lock = (bool*)0xdeb9c868;
+  //*miniverse_lock = false;
+
+  /* Set pointer to register_handler function */
+  void (*register_handler)(bool (*)(uintptr_t, uint8_t *,uintptr_t, size_t));
+  register_handler = (void(*)(bool(*)(uintptr_t,uint8_t*,uintptr_t,size_t)))0xdeae3d10;
+  register_handler(&my_is_target);
+  
+  /* Set pointer to wrap_mmap function */
+  void (*wrap_mmap)(void*,size_t,int,int,int,off_t);
+  wrap_mmap = (void(*)(void*,size_t,int,int,int,off_t))0xdeae3dd0;
+
+  /* Set pointer to wrap_mprotect function */
+  void (*wrap_mprotect)(void*,size_t,int);
+  wrap_mprotect = (void(*)(void*,size_t,int))0xdeae3f90;
+
+  uint8_t orig_code[] = "\x8b\x44\x24\x04\x83\xf8\x00\x74\x14\xb8\x19\x00\x00\x07\xc3\x6d\x6f\x64\x65\x3a\x20\x25\x64\x0a\x00\x25\x73\x0a\x00\xb8\x0f\x00\x00\x07\xc3\x90\xeb\xfe\xe9\xff\xff\xff\xfe";
  
-	void *code_buffer = (void*)0x7000000;
+  void *code_buffer = (void*)0x7000000;
 	
-	mmap(code_buffer, 4096*2, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  wrap_mmap(code_buffer, 4096*2, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
  
-	memcpy(code_buffer, orig_code, sizeof(orig_code));
+  memcpy(code_buffer, orig_code, sizeof(orig_code));
 
-  mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
+  wrap_mprotect(code_buffer, 4096, PROT_EXEC|PROT_READ);
 
   uint32_t result = ((uint32_t (*)(uint32_t))code_buffer)(0);
   printf("Result for 0: %s (%x)\n", (uint8_t*)result, result );
   result = ((uint32_t (*)(uint32_t))code_buffer)(1);
   printf("Result for 1: %s (%x)\n", (uint8_t*)result, result );
-	return 0;
+  return 0;
 
 }
