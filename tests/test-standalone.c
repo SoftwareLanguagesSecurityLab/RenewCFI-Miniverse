@@ -53,7 +53,7 @@ int main(int argc, char** argv){
    * and will need to be changed */
   /* Code segment */
   /* (length is starting offset plus memory size of third program header) */
-  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xaf999, PROT_READ|PROT_EXEC,
+  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xb0b29, PROT_READ|PROT_EXEC,
                             MAP_PRIVATE,fd,0);
   if( mini_exec != (uint8_t*)0xdeadb000 ){
     fprintf( stderr, "Error %d: Could not mmap executable miniverse region.\n", errno );
@@ -64,9 +64,9 @@ int main(int argc, char** argv){
   /* data segment */
   /* (base address is virtual addr of 4th program header rounded down to the
    * nearest page, and length is enough to cover that + the DYNAMIC segment) */
-  uint8_t *mini_data = mmap((void*)0xdeb8c000, 0x11000, PROT_READ|PROT_WRITE,
-                            MAP_PRIVATE,fd,0xb0000);
-  if( mini_data != (uint8_t*)0xdeb8c000 ){
+  uint8_t *mini_data = mmap((void*)0xdeb8d000, 0x11000, PROT_READ|PROT_WRITE,
+                            MAP_PRIVATE,fd,0xb1000);
+  if( mini_data != (uint8_t*)0xdeb8d000 ){
     fprintf( stderr, "Error %d: Could not mmap miniverse data region.\n", errno );
     abort();
   }
@@ -74,7 +74,7 @@ int main(int argc, char** argv){
   /* Clear bss section */
   /* Starting offset is the base address of the data segment + FileSiz */
   /* Length is the ending address of data segment - starting addr of memset */
-  memset((void*)0xdeb9b9b8, 0, 0x1648);
+  memset((void*)0xdeb9ceb8, 0, 0x1148);
 
   //bool* miniverse_lock = (bool*)0xdeb9c868;
   //*miniverse_lock = false;
