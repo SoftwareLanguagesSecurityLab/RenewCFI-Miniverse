@@ -10,6 +10,7 @@ Test loading in miniverse as a standalone binary blob
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <assert.h>
 #include <errno.h>
@@ -33,7 +34,53 @@ printf("true: Special case 2!\n");
   return false;
 }
 
-int main(int argc, char** argv){
+extern void load_miniverse_asm();
+
+void load_miniverse_simple(){
+
+  int fd = open("standalone", O_RDONLY);
+  
+  if( fd < 0 ){
+    abort();
+  }
+
+  /* These addresses will vary if miniverse is altered at all,
+   * and will need to be changed */
+  /* Code segment */
+  /* (length is starting offset plus memory size of third program header) */
+  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xb0b29, PROT_READ|PROT_EXEC,
+                            MAP_PRIVATE,fd,0);
+  if( mini_exec != (uint8_t*)0xdeadb000 ){
+    abort();
+  }
+
+  /* data segment */
+  /* (base address is virtual addr of 4th program header rounded down to the
+   * nearest page, and length is enough to cover that + the DYNAMIC segment) */
+  uint8_t *mini_data = mmap((void*)0xdeb8d000, 0x11000, PROT_READ|PROT_WRITE,
+                            MAP_PRIVATE,fd,0xb1000);
+  if( mini_data != (uint8_t*)0xdeb8d000 ){
+    abort();
+  }
+
+  /* Clear bss section */
+  /* Starting offset is the base address of the data segment + FileSiz */
+  /* Length is the ending address of data segment - starting addr of memset */
+  memset((void*)0xdeb9ceb8, 0, 0x1148);
+
+  //bool* miniverse_lock = (bool*)0xdeb9c868;
+  //*miniverse_lock = false;
+
+  /* Set pointer to register_handler function */
+  void (*register_handler)(bool (*)(uintptr_t, uint8_t *,uintptr_t, size_t));
+  register_handler = (void(*)(bool(*)(uintptr_t,uint8_t*,uintptr_t,size_t)))0xdeae3d10;
+  register_handler(&my_is_target);
+
+  close(fd);
+  
+}
+
+void load_miniverse(){
 
   int fd = open("standalone", O_RDONLY);
   
@@ -84,6 +131,13 @@ int main(int argc, char** argv){
   register_handler = (void(*)(bool(*)(uintptr_t,uint8_t*,uintptr_t,size_t)))0xdeae3d10;
   register_handler(&my_is_target);
   
+}
+
+int main(int argc, char** argv){
+
+  load_miniverse_asm();
+  //load_miniverse_simple();
+
   /* Set pointer to wrap_mmap function */
   void (*wrap_mmap)(void*,size_t,int,int,int,off_t);
   wrap_mmap = (void(*)(void*,size_t,int,int,int,off_t))0xdeae3dd0;

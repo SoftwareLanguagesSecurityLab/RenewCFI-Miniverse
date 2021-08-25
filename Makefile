@@ -32,7 +32,8 @@ $(HIGH_ADDR_TEST): all
 $(STANDALONE_TEST): standalone
 	$(CC) -m32 -g -I. tests/$@.c -S -o $@.s
 	python miniverse_spatcher.py $@.s
-	$(CC) -m32 -g -I. $@.s -o $@
+	$(CC) -m32 -c -g -I. tests/$@.S -o $@-asm.o
+	$(CC) -m32 -g -I. $@.s $@-asm.o -o $@
 
 test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS) $(HIGH_ADDR_TEST) $(STANDALONE_TEST)
 
@@ -43,6 +44,7 @@ install: all
 	cp miniverse.h /usr/local/include/miniverse.h
 	cp libminiverse.a /usr/local/lib/libminiverse.a
 	cp miniverse_spatcher.py /usr/local/bin/miniverse_spatcher.py
+	cp standalone /usr/local/bin/miniverse-standalone
 
 %.o: %.c
 	$(CC) -Wall -Wextra -m32 -fPIE -shared -g -O2 -c $< -o $@
