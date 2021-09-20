@@ -181,10 +181,12 @@ bool in_code_region(uintptr_t address){
   return false;
 }
 
+int my_read(int, char*, unsigned int);
+
 /* Get a single line from a file.  Lines should not exceed 255 characters.  */
 bool file_get_line(char* buf, size_t size, int fd){
   for( size_t i = 0; i < size-1; i++){
-    if( read(fd, buf, 1) == 0 ){
+    if( my_read(fd, buf, 1) == 0 ){
       buf++;
       *buf = '\0';
       return false;
@@ -220,11 +222,57 @@ unsigned long my_strtoul(char* str, char **str_end, int base){
   return value;
 }
 
+int my_open(const char* path, int mode){
+  int f;
+  asm volatile(
+    "movl $5, %%eax\n"
+    "movl %1, %%ebx\n"
+    "movl %2, %%ecx\n"
+    "movl $0, %%edx\n"
+    "int $0x80\n"
+    "movl %%eax, %0\n"
+    : "=r" (f)
+    : "g" (path), "g" (mode)
+    : "ebx", "esi", "edi"
+  );
+  return f;
+}
+
+int my_read(int f, char* buf, unsigned int count){
+  unsigned int bytes_read;
+  asm volatile(
+    "movl $3, %%eax\n"
+    "movl %1, %%ebx\n"
+    "movl %2, %%ecx\n"
+    "movl %3, %%edx\n"
+    "int $0x80\n"
+    "movl %%eax, %0\n"
+    : "=g" (bytes_read)
+    : "g" (f), "g" (buf), "g" (count)
+    : "ebx", "esi", "edi"
+  );
+  return bytes_read;
+}
+
+int my_close(int f){
+  int result;
+  asm volatile(
+    "movl $6, %%eax\n"
+    "movl %1, %%ebx\n"
+    "int $0x80\n"
+    "movl %%eax, %0\n"
+    : "=g" (result)
+    : "g" (f)
+    : "ebx", "esi", "edi"
+  );
+  return result;
+}
+
 bool get_specific_segment(uintptr_t addr_in_segment,
                           uintptr_t *segment_start, uintptr_t *segment_end){
   char line[256];
   uintptr_t region_start,region_end;
-  int f = open("/proc/self/maps", O_RDONLY);
+  int f = my_open("/proc/self/maps", O_RDONLY);
   bool done = false;
   while( !done ){
     done = !file_get_line(line, 256, f);
@@ -233,11 +281,11 @@ bool get_specific_segment(uintptr_t addr_in_segment,
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
       *segment_start = region_start;
       *segment_end = region_end;
-      close(f);
+      my_close(f);
       return true;
     }
   }
-  close(f);
+  my_close(f);
   return false;
 }
 
@@ -248,7 +296,7 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
     printf("ALERT: I REALLY don't like 0x%x-0x%x\n", range_start, range_end);
     return false;
   }
-  int f = open("/proc/self/maps", O_RDONLY);
+  int f = my_open("/proc/self/maps", O_RDONLY);
   bool done = false;
   while( !done ){
     done = !file_get_line(line, 256, f);
@@ -259,12 +307,12 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
     region_end = my_strtoul(line+9,NULL,16);
     if( (region_start >= range_start && region_start <= range_end) ||
         (region_end >= range_start && region_end <= range_end) ){
-      close(f);
+      my_close(f);
       printf("ALERT: I don't like 0x%x-0x%x\n", range_start, range_end);
       return false;
     }
   }
-  close(f);
+  my_close(f);
   return true;
 }
 
@@ -273,7 +321,7 @@ bool find_segment_with_main(uintptr_t* segment_start, uintptr_t* segment_end){
      This is not going to be always correct. */
   char line[256];
   uintptr_t region_start,region_end;
-  int f = open("/proc/self/maps", O_RDONLY);
+  int f = my_open("/proc/self/maps", O_RDONLY);
   bool done = false;
   while( !done ){
     done = !file_get_line(line, 256, f);
@@ -282,10 +330,11 @@ bool find_segment_with_main(uintptr_t* segment_start, uintptr_t* segment_end){
     if( line[18] == 'r' && line[19] == '-' && line[20] == 'x' ){
       *segment_start = region_start;
       *segment_end = region_end;
-      close(f);
+      my_close(f);
       return true;
     }
   }
+  my_close(f);
   return false;
 }
 
@@ -326,7 +375,7 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
 void mirror_specific_segment(uintptr_t addr_in_segment){
   char line[256];
   uintptr_t region_start,region_end,i;
-  int f = open("/proc/self/maps", O_RDONLY);
+  int f = my_open("/proc/self/maps", O_RDONLY);
   void* mapped_addr;
   bool done = false;
   while( !done ){
@@ -352,11 +401,11 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
       for( i = region_start; i < region_end; i++ ){
         *(uint8_t*)(i*4+fixed_offset) = *(uint8_t*)i;
       }
-      close(f);
+      my_close(f);
       return;
     }
   }
-  close(f);
+  my_close(f);
 }
 
 #ifdef RECORD_STATS

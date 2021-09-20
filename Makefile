@@ -8,8 +8,19 @@ all: miniverse.o handlers.o
 	#$(CC) -m32 -Wall -Wextra -g bpatch.c inittester.c -o bpatch
 	#nasm -f bin -l entry.lst entry.asm
 
+glibc_install=${HOME}/git/glibc/BUILD/install
+
 standalone: all
-	$(CC) -Wl,-Ttext-segment=0xdeadb000 -m32 -static-pie -fPIE -g -I. stub.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@ 
+	_XOPEN_SOURCE=600 $(CC) -Wl,-Ttext-segment=0xdeadb000 -m32 -static-pie -fPIE -fno-stack-protector -g -I. \
+  -L "${glibc_install}/lib" \
+  -I "${glibc_install}/include" \
+  -Wl,--rpath="${glibc_install}/lib" \
+  -Wl,--dynamic-linker="${glibc_install}/lib/ld-linux.so.2" \
+  -v -nostartfiles \
+  ${glibc_install}/lib/crti.o \
+  ${glibc_install}/lib/crtn.o \
+  ${glibc_install}/lib/crt1.o \
+  stub.c miniverse.c handlers.c /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@ 
 
 UNPATCHED_TESTS := brokentest-multiple-regions
 PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call
