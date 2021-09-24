@@ -293,7 +293,9 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
   char line[256];
   uintptr_t region_start,region_end;
   if( range_end < range_start ){
+#ifdef DEBUG
     printf("ALERT: I REALLY don't like 0x%x-0x%x\n", range_start, range_end);
+#endif
     return false;
   }
   int f = my_open("/proc/self/maps", O_RDONLY);
@@ -308,7 +310,9 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
     if( (region_start >= range_start && region_start <= range_end) ||
         (region_end >= range_start && region_end <= range_end) ){
       my_close(f);
+#ifdef DEBUG
       printf("ALERT: I don't like 0x%x-0x%x\n", range_start, range_end);
+#endif
       return false;
     }
   }

@@ -272,7 +272,9 @@ printf("Setting text section to writable: %x, %x bytes\n", address, code.orig_si
       /*}else*/ if( rel.target <= (uintptr_t)code.base+code.orig_size-4 ){
         *(uint32_t*)(rel.target*4+fixed_offset) = (uintptr_t)code.code + rel.offset;
       }else{
+#ifdef DEBUG
         printf("WARNING: Target too close to code boundary\n");
+#endif
       }
     }
   }
