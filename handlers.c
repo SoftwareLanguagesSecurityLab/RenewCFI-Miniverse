@@ -225,15 +225,10 @@ unsigned long my_strtoul(char* str, char **str_end, int base){
 int my_open(const char* path, int mode){
   int f;
   asm volatile(
-    "movl $5, %%eax\n"
-    "movl %1, %%ebx\n"
-    "movl %2, %%ecx\n"
-    "movl $0, %%edx\n"
     "int $0x80\n"
-    "movl %%eax, %0\n"
-    : "=r" (f)
-    : "g" (path), "g" (mode)
-    : "ebx", "esi", "edi"
+    : "=a" (f)
+    : "0" (5), "b"(path), "c" (mode), "d" (0)
+    : "memory"
   );
   return f;
 }
@@ -241,15 +236,10 @@ int my_open(const char* path, int mode){
 int my_read(int f, char* buf, unsigned int count){
   unsigned int bytes_read;
   asm volatile(
-    "movl $3, %%eax\n"
-    "movl %1, %%ebx\n"
-    "movl %2, %%ecx\n"
-    "movl %3, %%edx\n"
     "int $0x80\n"
-    "movl %%eax, %0\n"
-    : "=g" (bytes_read)
-    : "g" (f), "g" (buf), "g" (count)
-    : "ebx", "esi", "edi"
+    : "=a" (bytes_read)
+    : "0" (3), "b" (f), "c" (buf), "d" (count)
+    : "memory"
   );
   return bytes_read;
 }
@@ -257,13 +247,10 @@ int my_read(int f, char* buf, unsigned int count){
 int my_close(int f){
   int result;
   asm volatile(
-    "movl $6, %%eax\n"
-    "movl %1, %%ebx\n"
     "int $0x80\n"
-    "movl %%eax, %0\n"
-    : "=g" (result)
-    : "g" (f)
-    : "ebx", "esi", "edi"
+    : "=a" (result)
+    : "0" (6), "b" (f)
+    : "memory"
   );
   return result;
 }

@@ -23,7 +23,7 @@ standalone: all
   stub.c miniverse.c handlers.c /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@ 
 
 UNPATCHED_TESTS := brokentest-multiple-regions
-PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call
+PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call test16-loop
 HIGH_ADDR_TEST := test11-high-addr
 STANDALONE_TEST := test-standalone
 

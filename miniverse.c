@@ -379,6 +379,9 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
     case SS_INS_JP:
     case SS_INS_JRCXZ:
     case SS_INS_JS:
+    case SS_INS_LOOP:
+    case SS_INS_LOOPE:
+    case SS_INS_LOOPNE:
       /* generate conditional control flow */
 #ifdef RECORD_STATS
       clock_gettime(CLOCK_MONOTONIC, &start_time);
@@ -622,6 +625,37 @@ inline void gen_cond(mv_code_t *code, ss_insn *insn){
     disp = *(int32_t*)(insn->bytes+2);
     gen_reloc(code, RELOC_OFF, code->offset+2, insn->address+6+disp);
     code->offset += 6;
+  }else if( insn->id == SS_INS_LOOP ||
+            insn->id == SS_INS_LOOPE ||
+            insn->id == SS_INS_LOOPNE ){
+    /* Loop instructions are a rare special case.  They decrement ecx but don't
+       change flags, and they have a single-byte offset, meaning we need to
+       expand their offset (due to the expanded size of rewritten code) while
+       not changing the flags.  We can do this by still using a loop
+       instruction, but to an unconditional jmp with our actual destination.
+       I'm putting the unconditional jmp before the loop, since I think that's
+       the way the branch predictor will expect and the original loop
+       instruction to be used.
+       The code goes like this:
+         jmp loopinstr
+         jmp target
+       loopinstr:
+         loop target
+    */
+    gen_padding(code, insn, 9, is_target);
+    check_target(code, insn, is_target);
+    /* write opcode bytes for the three instructions */
+    *(code->code+code->offset) = JMP_REL_SHORT;
+    *(code->code+code->offset+2) = JMP_REL_NEAR;
+    *(code->code+code->offset+7) = *(insn->bytes);
+    /* Write fixed offsets for first jmp and loop
+       jmp goes forward 5, loop goes backward 7*/
+    *(code->code+code->offset+1) = 0x05;
+    *(code->code+code->offset+8) = 0xf9;
+    /* Create relocation for second jmp, to loop's original target */
+    disp = *(int8_t*)(insn->bytes+1);
+    gen_reloc(code, RELOC_OFF, code->offset+3, insn->address+2+disp);
+    code->offset += 9;
   }else{
     /* JCC with 1-byte offset (2-byte instruction) */
     gen_padding(code, insn, 6, is_target); 
