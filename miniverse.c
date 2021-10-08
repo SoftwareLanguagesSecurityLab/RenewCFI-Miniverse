@@ -638,9 +638,10 @@ inline void gen_cond(mv_code_t *code, ss_insn *insn){
        instruction to be used.
        The code goes like this:
          jmp loopinstr
+       jmpinstr
          jmp target
        loopinstr:
-         loop target
+         loop jmpinstr
     */
     gen_padding(code, insn, 9, is_target);
     check_target(code, insn, is_target);
