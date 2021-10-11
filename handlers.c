@@ -25,6 +25,8 @@
 #include <fcntl.h>
 
 uintptr_t fixed_offset = 0x20000000;
+uintptr_t fixed_offset_region_addr = 0x0;
+#define FIXED_OFFSET_REGION_SIZE (0x2000000*4+0x2000000*4)
 
 #ifdef RECORD_STATS
 #include <time.h>
@@ -391,15 +393,15 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
          somehow allocated in a mysterious region based on segment registers */
       /* Add extra buffer space before start of region for new regions that
          could be allocated at a lower address than the initial region */
+      fixed_offset_region_addr = segfault_addr*4+fixed_offset-0x2000000*4;
       void* mapped_addr = __real_mmap(
-          (void*)(segfault_addr*4+fixed_offset-0x2000000*4),
-          0x2000000*4+0x2000000*4,PROT_WRITE|PROT_READ,
+          (void*)(fixed_offset_region_addr),
+          FIXED_OFFSET_REGION_SIZE,PROT_WRITE|PROT_READ,
           MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
       if( mapped_addr == MAP_FAILED ){
         printf("FATAL ERROR: Could not map fixed offset region 0x%x-0x%x\n",
-               (segfault_addr*4+fixed_offset-0x2000000*4),
-               (segfault_addr*4+fixed_offset-0x2000000*4)+
-                   0x2000000*4+0x2000000*4);
+               (fixed_offset_region_addr),
+               (fixed_offset_region_addr)+FIXED_OFFSET_REGION_SIZE);
         _exit(EXIT_FAILURE);
       }
       return;
@@ -694,6 +696,31 @@ void rewrite_region(code_region_t* region){
   pa_entry_t old_mem;
   pa_entry_t old_mapping;
   /*pa_entry_t backup_mem;*/
+
+  /* If this region hasn't been rewritten before, check whether applying the
+     fixed offset to it results in an address outside our allocated fixed
+     offset memory region.  If so, try to allocate a special fixed offset
+     region just for this jit region.  There is no guarantee that the target
+     address will not already be occupied by some other memory region, or even
+     partially overlap with our original region, which I'm not currently
+     handling.
+     If the region was ever rewritten, then new_address will not be zero.
+     If the mmap fails, abort the program. */
+  if( region->new_address == 0 &&
+      (region->address*4+fixed_offset < fixed_offset_region_addr ||
+      (region->address+region->size)*4+fixed_offset >=
+          fixed_offset_region_addr+FIXED_OFFSET_REGION_SIZE ) ){
+    void* mapped_addr = __real_mmap(
+        (void*)(region->address*4+fixed_offset),
+        region->size*4,PROT_WRITE|PROT_READ,
+        MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
+    if( mapped_addr == MAP_FAILED ){
+      printf("FATAL ERROR: JIT region required late allocation of fixed offset region 0x%x-0x%x, which could not be allocated\n",
+             region->address*4+fixed_offset,
+             region->address*4+fixed_offset + region->size*4);
+      _exit(EXIT_FAILURE);
+    }
+  }
 
 #ifdef DEBUG
   printf("Calling real mprotect for orig: 0x%x, 0x%x\n", (uintptr_t)orig_code, code_size);
