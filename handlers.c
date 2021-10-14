@@ -537,6 +537,12 @@ void *__wrap_mmap(void *addr, size_t length, int prot, int flags,
     printf("(mmap) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
 #endif
     prot &= ~PROT_EXEC; /* Unset the exec bit */
+    /* Force length to be a multiple of the page size, which mmap implicitly
+       does already, since it allocates at a page granularity.
+       I assume large pages are not being used. */
+    if( (length & 0xfffff000) < length ){
+      length = (length & 0xfffff000) + 0x1000;
+    }
     /* Get actual address, in case mmap is passed 0 for the address */
     void* real_addr = __real_mmap(addr,length,prot,flags,fd,offset);
     /* Verify mmap succeeded before adding code region */
@@ -577,6 +583,14 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
 #ifdef DEBUG
   printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
 #endif
+
+  /* Force len to be a multiple of the page size, which mprotect implicitly
+     does already, since it changes permissions at a page granularity.
+     I assume large pages are not being used. */
+  if( (len & 0xfffff000) < len ){
+    len = (len & 0xfffff000) + 0x1000;
+  }
+
   if( (prot & PROT_EXEC) ){
 #ifdef DEBUG
   printf("(mprotect YES) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);

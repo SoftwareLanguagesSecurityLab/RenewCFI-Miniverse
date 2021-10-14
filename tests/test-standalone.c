@@ -144,7 +144,7 @@ int main(int argc, char** argv){
 
   /* Set pointer to wrap_mprotect function */
   void (*wrap_mprotect)(void*,size_t,int);
-  wrap_mprotect = (void(*)(void*,size_t,int))0xdeae5100;
+  wrap_mprotect = (void(*)(void*,size_t,int))0xdeae511d;
 
   uint8_t orig_code[] = "\x8b\x44\x24\x04\x83\xf8\x00\x74\x14\xb8\x19\x00\x00\x07\xc3\x6d\x6f\x64\x65\x3a\x20\x25\x64\x0a\x00\x25\x73\x0a\x00\xb8\x0f\x00\x00\x07\xc3\x90\xeb\xfe\xe9\xff\xff\xff\xfe";
  
