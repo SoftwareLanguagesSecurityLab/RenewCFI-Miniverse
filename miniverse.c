@@ -678,13 +678,33 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
   int32_t disp;
   uintptr_t target_addr;
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
-  
-  /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
+  uint32_t start_offset = 0;
+
+  /* Handle prefixes */
+  /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit
+     argument) */
   switch( *(insn->bytes) ){
+    /* Segment override prefixes */
+    /* For direct jump/calls, this should be ignored,
+       and for now the rewritten version will simply omit the prefix. 
+       TODO: When handling various prefixes, do I need to preserve any of them
+       to maintain identical behavior?  It depends on the prefix, but most
+       shouldn't change a direct jmp/call */
+    case 0x2e:
+    case 0x36:
+    case 0x3e:
+    case 0x26:
+    case 0x64:
+    case 0x65:
+      start_offset = 1;
+      break;
+  }
+  
+  switch( *(insn->bytes+start_offset) ){
     /* Jump with 4-byte offset (5-byte instruction) */
     case JMP_REL_NEAR:
-      disp = *(int32_t*)(insn->bytes+1);
-      target_addr = (uintptr_t)((int32_t)insn->address + 5 + disp);
+      disp = *(int32_t*)(insn->bytes+start_offset+1);
+      target_addr = (uintptr_t)((int32_t)insn->address + insn->size + disp);
       if( (target_addr < code->base || 
           target_addr >= code->base+code->orig_size) &&
           in_code_region(target_addr) ){
@@ -735,7 +755,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       }
       gen_padding(code, insn, 5, is_target); 
       check_target(code, insn, is_target);
-      *(code->code+code->offset) = *(insn->bytes);
+      *(code->code+code->offset) = *(insn->bytes+start_offset);
       /* Relocation target is instruction address + instruction length +
          displacement */
       gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
@@ -746,8 +766,8 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
     /* Call with 4-byte offset (5-byte instruction) */
     case CALL_REL_NEAR:
       /* Retrieve jmp target offset and add to relocation table */
-      disp = *(int32_t*)(insn->bytes+1);
-      target_addr = (uintptr_t)((int32_t)insn->address + 5 + disp);
+      disp = *(int32_t*)(insn->bytes+start_offset+1);
+      target_addr = (uintptr_t)((int32_t)insn->address + insn->size + disp);
       /* If PUSH_OLD_ADDRESSES is defined, we don't need special case handling
          for pic because we are ALWAYS pushing the old address.  Pic code should
          work by default in that case. */
@@ -759,7 +779,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
          pattern. If call to PIC, we need to push original ret address to
          pass to thunk, then after thunk returns, move stack back to where
          it was before */
-      if( is_pic(code, insn->address + insn->size + disp) && *(insn->bytes) == CALL_REL_NEAR ){
+      if( is_pic(code, insn->address + insn->size + disp) && *(insn->bytes+start_offset) == CALL_REL_NEAR ){
 #endif
         /* If this is a call within this same region, transform to push the
            old return address and direct jump to address in this region */
@@ -773,12 +793,12 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         *(uint32_t*)(code->code+code->offset+1) = insn->address + insn->size; // return address
 #ifdef PUSH_OLD_ADDRESSES
         *(code->code+code->offset+5) = 0xe9; // jmp instead of call
-        gen_reloc(code, RELOC_OFF, code->offset+6, insn->address+5+disp);
+        gen_reloc(code, RELOC_OFF, code->offset+6, insn->address+insn->size+disp);
         code->offset += 10; // length of push + call
 #else
         /* This makes assumptions that PIC code is following the conventions of
            get_pc_thunk and is unsuitable for general use */
-        *(code->code+code->offset+5) = *(insn->bytes); // original call
+        *(code->code+code->offset+5) = *(insn->bytes+start_offset); // original call
         *(code->code+code->offset+10) = 0x83; // add
         *(code->code+code->offset+11) = 0xc4; // esp,
         *(code->code+code->offset+12) = 0x04; // 4
@@ -853,10 +873,10 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
          it as a direct call and push a new return address */
       gen_padding(code, insn, 5, is_target); 
       check_target(code, insn, is_target);
-      *(code->code+code->offset) = *(insn->bytes);
+      *(code->code+code->offset) = *(insn->bytes+start_offset);
       /* Relocation target is instruction address + instruction length +
          displacement */
-      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+5+disp);
+      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+insn->size+disp);
       code->offset += 5;
       /* TODO: Are we safe with not marking this as a safe offset? */
       //code->last_safe_offset = code->offset;
@@ -867,11 +887,12 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       gen_padding(code, insn, 5, is_target); 
       check_target(code, insn, is_target);
       /* Special case where we must extend the instruction to its longer form */
-      disp = *(int8_t*)(insn->bytes+1);
+      disp = *(int8_t*)(insn->bytes+start_offset+1);
       /* Patch initial byte of instruction from short jmp to near jmp */
       *(code->code+code->offset) = JMP_REL_NEAR;
       /* Relocation target is instruction address + instruction length + displacement */
-      gen_reloc(code, RELOC_OFF, code->offset+1, insn->address+2+disp);
+      gen_reloc(code, RELOC_OFF, code->offset+1,
+                insn->address+start_offset+2+disp);
       /* TODO: special case where we must extend the instruction to its longer form */
       code->offset += 5; // Size of new, larger instruction
       code->last_safe_offset = code->offset;
@@ -885,7 +906,24 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
 
 void gen_indirect(mv_code_t *code, ss_insn *insn){
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
+  uint32_t start_offset = 0;
   //printf("INDIRECT: %llx %s\n", insn->address, insn->insn_str);
+
+  /* Handle prefixes */
+  /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit
+     argument) */
+  switch( *(insn->bytes) ){
+    /* Segment override prefixes */
+    case 0x2e:
+    case 0x36:
+    case 0x3e:
+    case 0x26:
+    case 0x64:
+    case 0x65:
+      start_offset = 1;
+      break;
+  }
+
   /* TODO: This does not handle
        overlapping pointers
        optimizations for targets in registers
@@ -926,57 +964,70 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
      [esp+disp32].  It may also include a scaled index register.
      We must first check that a SIB byte follows the mod/rm byte, and then
      check the SIB byte for a base of esp */
-  if( ((insn->bytes[1] & 0xC7) == 0x04 || (insn->bytes[1] & 0xC7) == 0x44 ||
-      (insn->bytes[1] & 0xC7) == 0x84) && (insn->bytes[2] & 0x07) == 0x04 ){
+  if( ((insn->bytes[start_offset+1] & 0xC7) == 0x04 ||
+       (insn->bytes[start_offset+1] & 0xC7) == 0x44 ||
+       (insn->bytes[start_offset+1] & 0xC7) == 0x84) && 
+      (insn->bytes[start_offset+2] & 0x07) == 0x04 ){
     uint32_t new_disp = 0;
-    switch( (insn->bytes[1] & 0xC7) ){
+    switch( (insn->bytes[start_offset+1] & 0xC7) ){
       case 0x04:
         /* We add 4 because we need to add a 4-byte displacement;
            addressing mode includes no displacement */
         gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                                insn->size-1+4, is_target);
+                                insn->size-1+4+start_offset, is_target);
         new_disp = 0x04;
         break;
       case 0x44:
         /* We add 3 because we'll expand the 1-byte displacement to 4;
            the 1-byte displacement is probably enough, but we'll be cautious */
         gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                                insn->size-1+3, is_target);
-        new_disp = (int8_t)insn->bytes[3]+0x04;
+                                insn->size-1+3+start_offset, is_target);
+        new_disp = (int8_t)insn->bytes[start_offset+3]+0x04;
         break;
       case 0x84:
         /* This already has a 4-byte displacement, so generate normal padding */
         gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                                insn->size-1, is_target);
-        new_disp = *(int32_t*)(insn->bytes+3)+0x04;
+                                insn->size-1+start_offset, is_target);
+        new_disp = *(int32_t*)(insn->bytes+start_offset+3)+0x04;
         break;
     }
     check_target(code, insn, is_target);
     *(code->code+code->offset++) = indirect_template_before[0];
+    /* Insert prefix before mov instruction in template
+       TODO: To handle multiple prefixes, all would need to be copied here */
+    if( start_offset == 1 ){
+      *(code->code+code->offset++) = insn->bytes[0];
+    }
     *(code->code+code->offset++) = indirect_template_before[1];
     /* Force Mod/RM byte to include SIB + disp32 (dest register is eax) */ 
     *(code->code+code->offset++) = 0x84;
     /* Copy SIB byte verbatim */
-    *(code->code+code->offset++) = insn->bytes[2];
+    *(code->code+code->offset++) = insn->bytes[start_offset+2];
     /* Write our custom displacement */
     *(uint32_t*)(code->code+code->offset) = new_disp;
     code->offset += 4;
   }else{
     gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                            insn->size-1+4, is_target);
+                            insn->size-1+4+start_offset, is_target);
     check_target(code, insn, is_target);
     *(code->code+code->offset++) = indirect_template_before[0];
+    /* Insert prefix before mov instruction in template
+       TODO: To handle multiple prefixes, all would need to be copied here */
+    if( start_offset == 1 ){
+      *(code->code+code->offset++) = insn->bytes[0];
+    }
     *(code->code+code->offset++) = indirect_template_before[1];
     /* Copy Mod/RM byte from original instruction, but mask off /digit or REG:
        we can simply mask it off specifically because our target is eax,
        which is equivalent to /0.
        This field is actually part of the jmp/call opcode, so clearing it to
        /0 for our mov instruction should always work. */
-    *(code->code+code->offset++) = insn->bytes[1] & 0xC7;
+    *(code->code+code->offset++) = insn->bytes[start_offset+1] & 0xC7;
     /* If instruction has a SIB byte or displacement, copy those as well. */
-    if( insn->size >= 3 ){
-      memcpy( code->code+code->offset, insn->bytes+2, insn->size-2 );
-      code->offset += insn->size-2;
+    if( insn->size-start_offset >= 3 ){
+      memcpy( code->code+code->offset, insn->bytes+start_offset+2,
+              insn->size-2 );
+      code->offset += insn->size-start_offset-2;
     }
   }
   gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target); 

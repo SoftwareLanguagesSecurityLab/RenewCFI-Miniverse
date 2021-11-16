@@ -23,9 +23,13 @@ standalone: all
   stub.c miniverse.c handlers.c /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@ 
 
 UNPATCHED_TESTS := brokentest-multiple-regions
-PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call test16-loop test17-distant-regions test18-mmap-len
+PATCHED_TESTS := test0-basic test1-pointers-in-stack test2-modify-regions test3-callbacks test4-call-as-target test5-special-calls test6-return-addr test7-return-imm test8-odd-alignment test9-superset-special test10-cross-boundary test12-multiple-initial-regions test13-bigmem test14-esp-call test15-cross-region-call test16-loop test17-distant-regions test18-mmap-len test19-segment-override
 HIGH_ADDR_TEST := test11-high-addr
+#UNINTEGRATED_TESTS := test19-segment-override
 STANDALONE_TEST := test-standalone
+
+$(UNINTEGRATED_TESTS): all
+	$(CC) -m32 -g -I. tests/$@.c -o $@
 
 $(UNPATCHED_TESTS): all
 	$(CC) -m32 -g -I. tests/$@.c libminiverse.a /usr/local/lib/libssdis.a /usr/local/lib/libudis86.a /usr/local/lib/libpagealloc.a -Wl,-wrap=mmap -Wl,-wrap=mprotect -o $@
@@ -46,7 +50,7 @@ $(STANDALONE_TEST): standalone
 	$(CC) -m32 -c -g -I. tests/$@.S -o $@-asm.o
 	$(CC) -m32 -g -I. $@.s $@-asm.o -o $@
 
-test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS) $(HIGH_ADDR_TEST) $(STANDALONE_TEST)
+test: all $(UNPATCHED_TESTS) $(PATCHED_TESTS) $(HIGH_ADDR_TEST) $(STANDALONE_TEST) $(UNINTEGRATED_TESTS)
 
 test-clang: CC=clang
 test-clang: test

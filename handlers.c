@@ -57,7 +57,7 @@ void *__real_mmap(void *addr, size_t length, int prot, int flags,
 
 int __real_mprotect(void *addr, size_t len, int prot);
 
-void mirror_specific_segment(uintptr_t addr_in_segment);
+void map_table_for_segment(uintptr_t addr_in_segment);
 
 bool default_is_target(uintptr_t address, uint8_t *bytes,
                        uintptr_t code_base, size_t code_size){
@@ -335,11 +335,34 @@ bool find_first_exec_segment(uintptr_t* segment_start, uintptr_t* segment_end){
   return false;
 }
 
+bool find_segment_by_name(char* name,
+                          uintptr_t* segment_start, uintptr_t* segment_end){
+  char line[256];
+  uintptr_t region_start,region_end;
+  int f = my_open("/proc/self/maps", O_RDONLY);
+  bool done = false;
+  while( !done ){
+    done = !file_get_line(line, 256, f);
+    region_start = my_strtoul(line, NULL,16);
+    region_end = my_strtoul(line+9,NULL,16);
+    if( strcmp(line+73,name) == 0 ){
+      *segment_start = region_start;
+      *segment_end = region_end;
+      my_close(f);
+      return true;
+    }
+  }
+  my_close(f);
+  return false;
+}
+
 void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
   uintptr_t caller_seg_start;
   uintptr_t caller_seg_end;
   uintptr_t first_exec_seg_start;
   uintptr_t first_exec_seg_end;
+  uintptr_t vdso_seg_start;
+  uintptr_t vdso_seg_end;
   uint32_t i;
 
   if( !get_specific_segment(calling_addr,
@@ -351,6 +374,12 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
       printf("FATAL ERROR: Could not find r-x segment in memory maps!\n"); 
       _exit(EXIT_FAILURE);
     }
+  }
+
+  /* Calls to the vdso need to have a table as well */
+  if( !find_segment_by_name("[vdso]\n", &vdso_seg_start, &vdso_seg_end) ){
+    printf("FATAL ERROR: Could not find vdso in memory maps!\n"); 
+    _exit(EXIT_FAILURE);
   }
 
   /* Get first executable segment.  This may be the same as caller_seg, if
@@ -378,16 +407,20 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
                                 (caller_seg_end-caller_seg_start)*4 ) &&
         is_proposed_range_valid(first_exec_seg_start*4+fixed_offset,
                                 first_exec_seg_start*4+fixed_offset + 
-                                (first_exec_seg_end-first_exec_seg_start)*4 ) ){
-      /* Mirror original memory regions immediately, now that we know the
-         fixed offset.*/
-      mirror_specific_segment(first_exec_seg_start);
+                                (first_exec_seg_end-first_exec_seg_start)*4 ) &&
+        is_proposed_range_valid(vdso_seg_start*4+fixed_offset,
+                                vdso_seg_start*4+fixed_offset + 
+                                (vdso_seg_end-vdso_seg_start)*4 ) ){
+      /* Map tables for original memory regions immediately, now that we know
+         the fixed offset.*/
+      map_table_for_segment(first_exec_seg_start);
       if( !(calling_addr >= first_exec_seg_start &&
             calling_addr < first_exec_seg_end) ){
-        /* Only mirror caller address if it's in a different region than the
-           first executable segment (to avoid trying to mirror it twice) */
-        mirror_specific_segment(calling_addr);
+        /* Only map table for caller address if it's in a different region than
+           the first executable segment (to avoid trying to map it twice) */
+        map_table_for_segment(calling_addr);
       }
+      map_table_for_segment(vdso_seg_start);
       /* Create huge memory buffer for lookup entries at a fixed offset
          TODO: Eventually change this from a hard-coded offset into memory
          somehow allocated in a mysterious region based on segment registers */
@@ -413,9 +446,9 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
   _exit(EXIT_FAILURE);
 }
 
-void mirror_specific_segment(uintptr_t addr_in_segment){
+void map_table_for_segment(uintptr_t addr_in_segment){
   char line[256];
-  uintptr_t region_start,region_end,i;
+  uintptr_t region_start,region_end;
   int f = my_open("/proc/self/maps", O_RDONLY);
   void* mapped_addr;
   bool done = false;
@@ -424,24 +457,21 @@ void mirror_specific_segment(uintptr_t addr_in_segment){
     region_start = my_strtoul(line, NULL,16);
     region_end = my_strtoul(line+9,NULL,16);
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
-      /* Map a memory region at a fixed offset from the code with a duplicate
-       * of the code contents */
+      /* Map a memory region at a fixed offset from the code with an empty
+       * table indicating no lookups should be done */
       mapped_addr = __real_mmap((void*)(region_start*4+fixed_offset),
                                 (region_end-region_start)*4,
                                 PROT_WRITE|PROT_READ,
                                 MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
       if( mapped_addr == MAP_FAILED ){
-        printf("FATAL ERROR: Could not map mirrored region at 0x%x-0x%x\n",
+        printf("FATAL ERROR: Could not map table region at 0x%x-0x%x\n",
                (region_start*4+fixed_offset),
                (region_start*4+fixed_offset)+(region_end-region_start)*4);
         _exit(EXIT_FAILURE);
       }
-      /* Manually copy each byte in the region to first of 4 bytes in duplicate;
-         only the first byte should be checked anyway, and these values are not
-         meant to be used in lookups */
-      for( i = region_start; i < region_end; i++ ){
-        *(uint8_t*)(i*4+fixed_offset) = *(uint8_t*)i;
-      }
+      /* We do not perform a lookup if a byte is zero, the default value in
+         the allocated region.  If this were to change, we would need to fill
+         every 4th byte with a new value indicating no lookup is needed */
       my_close(f);
       return;
     }
@@ -483,11 +513,6 @@ void print_stats(){
 void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes,
                             uintptr_t code_base, size_t code_size)){
   struct sigaction new_action, old_action;
-  /* I mirrored the code segments to handle attempts to jump to this code from
-   * rewritten code.  However, this only mirrors segments present when the
-   * program first registers the handler.  Any dynamically loaded modules
-   * introduced into memory later won't be handled. */
-  //mirror_code_segments();
   if( my_is_target != NULL ){
     is_target = my_is_target;
   }

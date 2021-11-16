@@ -14,23 +14,23 @@ load_miniverse_asm:
   push eax
   push 0x2
   push 0x5
-  push 0x9f78b
+  push 0xa07f7
   push 0xdeadb000
   call mini_mmap
   add esp,24
   // Mmap data
   pop eax
   push eax
-  push 0x9f000
+  push 0xa0000
   push eax
   push 0x2
   push 0x3
   push 0x14000
-  push 0xdeb7b000
+  push 0xdeb7c000
   call mini_mmap
   add esp,24
   // Memset bss to 0
-  mov eax, 0xdeb8be38
+  mov eax, 0xdeb8ce38
   mov ecx, 0x31c8
   call mini_memset
   // Call register_handler
@@ -44,7 +44,7 @@ pic2:
   sub ebx,ecx
   sub eax,ebx
   push eax
-  mov eax, 0xdeae4f8c
+  mov eax, 0xdeae5271
   call eax
   pop eax
   // Close fd
