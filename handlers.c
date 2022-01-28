@@ -190,7 +190,6 @@ int my_read(int, char*, unsigned int);
 bool file_get_line(char* buf, size_t size, int fd){
   for( size_t i = 0; i < size-1; i++){
     if( my_read(fd, buf, 1) == 0 ){
-      buf++;
       *buf = '\0';
       return false;
     }
@@ -263,9 +262,8 @@ bool get_specific_segment(uintptr_t addr_in_segment,
   char line[256];
   uintptr_t region_start,region_end;
   int f = my_open("/proc/self/maps", O_RDONLY);
-  bool done = false;
+  bool done = !file_get_line(line, 256, f);
   while( !done ){
-    done = !file_get_line(line, 256, f);
     region_start = my_strtoul(line, NULL,16);
     region_end = my_strtoul(line+9,NULL,16);
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
@@ -274,6 +272,10 @@ bool get_specific_segment(uintptr_t addr_in_segment,
       my_close(f);
       return true;
     }
+    /* In /proc/self/maps, the last line ends with a newline.
+       If file_get_line returns false, that means it reached EOF, from
+       after that last newline, so the buffer is empty if done is true. */
+    done = !file_get_line(line, 256, f);
   }
   my_close(f);
   return false;
@@ -289,9 +291,8 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
     return false;
   }
   int f = my_open("/proc/self/maps", O_RDONLY);
-  bool done = false;
+  bool done = !file_get_line(line, 256, f);
   while( !done ){
-    done = !file_get_line(line, 256, f);
     /* Extract region start and end addresses, and check if
        memory region falls within given range.  If so, then the
        range is not a valid candidate for new mmap */
@@ -305,6 +306,10 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
 #endif
       return false;
     }
+    /* In /proc/self/maps, the last line ends with a newline.
+       If file_get_line returns false, that means it reached EOF, from
+       after that last newline, so the buffer is empty if done is true. */
+    done = !file_get_line(line, 256, f);
   }
   my_close(f);
   return true;
@@ -319,9 +324,8 @@ bool find_first_exec_segment(uintptr_t* segment_start, uintptr_t* segment_end){
   char line[256];
   uintptr_t region_start,region_end;
   int f = my_open("/proc/self/maps", O_RDONLY);
-  bool done = false;
+  bool done = !file_get_line(line, 256, f);
   while( !done ){
-    done = !file_get_line(line, 256, f);
     region_start = my_strtoul(line, NULL,16);
     region_end = my_strtoul(line+9,NULL,16);
     if( line[18] == 'r' && line[19] == '-' && line[20] == 'x' ){
@@ -330,6 +334,10 @@ bool find_first_exec_segment(uintptr_t* segment_start, uintptr_t* segment_end){
       my_close(f);
       return true;
     }
+    /* In /proc/self/maps, the last line ends with a newline.
+       If file_get_line returns false, that means it reached EOF, from
+       after that last newline, so the buffer is empty if done is true. */
+    done = !file_get_line(line, 256, f);
   }
   my_close(f);
   return false;
@@ -340,9 +348,8 @@ bool find_segment_by_name(char* name,
   char line[256];
   uintptr_t region_start,region_end;
   int f = my_open("/proc/self/maps", O_RDONLY);
-  bool done = false;
+  bool done = !file_get_line(line, 256, f);
   while( !done ){
-    done = !file_get_line(line, 256, f);
     region_start = my_strtoul(line, NULL,16);
     region_end = my_strtoul(line+9,NULL,16);
     if( strcmp(line+73,name) == 0 ){
@@ -351,6 +358,10 @@ bool find_segment_by_name(char* name,
       my_close(f);
       return true;
     }
+    /* In /proc/self/maps, the last line ends with a newline.
+       If file_get_line returns false, that means it reached EOF, from
+       after that last newline, so the buffer is empty if done is true. */
+    done = !file_get_line(line, 256, f);
   }
   my_close(f);
   return false;
@@ -364,16 +375,14 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
   uintptr_t vdso_seg_start;
   uintptr_t vdso_seg_end;
   uint32_t i;
+  bool calling_addr_valid = true;
 
   if( !get_specific_segment(calling_addr,
                             &caller_seg_start, &caller_seg_end) ){
     printf("WARNING: Couldn't find segment for calling address 0x%x\n",
            calling_addr);
     printf("JIT code may have been entered via JMP instead of CALL.\n");
-    if( !find_first_exec_segment(&caller_seg_start, &caller_seg_end) ){
-      printf("FATAL ERROR: Could not find r-x segment in memory maps!\n"); 
-      _exit(EXIT_FAILURE);
-    }
+    calling_addr_valid = false;
   }
 
   /* Calls to the vdso need to have a table as well */
@@ -402,9 +411,10 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
   for( i = 0; i < 16; i++ ){
     if( is_proposed_range_valid(segfault_addr*4+fixed_offset-0x2000000*4,
                                 segfault_addr*4+fixed_offset+0x2000000*4) &&
-        is_proposed_range_valid(caller_seg_start*4+fixed_offset,
-                                caller_seg_start*4+fixed_offset + 
-                                (caller_seg_end-caller_seg_start)*4 ) &&
+        (!calling_addr_valid || 
+         is_proposed_range_valid(caller_seg_start*4+fixed_offset,
+                                 caller_seg_start*4+fixed_offset + 
+                                 (caller_seg_end-caller_seg_start)*4 ) ) &&
         is_proposed_range_valid(first_exec_seg_start*4+fixed_offset,
                                 first_exec_seg_start*4+fixed_offset + 
                                 (first_exec_seg_end-first_exec_seg_start)*4 ) &&
@@ -414,7 +424,7 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
       /* Map tables for original memory regions immediately, now that we know
          the fixed offset.*/
       map_table_for_segment(first_exec_seg_start);
-      if( !(calling_addr >= first_exec_seg_start &&
+      if( calling_addr_valid && !(calling_addr >= first_exec_seg_start &&
             calling_addr < first_exec_seg_end) ){
         /* Only map table for caller address if it's in a different region than
            the first executable segment (to avoid trying to map it twice) */
@@ -451,9 +461,8 @@ void map_table_for_segment(uintptr_t addr_in_segment){
   uintptr_t region_start,region_end;
   int f = my_open("/proc/self/maps", O_RDONLY);
   void* mapped_addr;
-  bool done = false;
+  bool done = !file_get_line(line, 256, f);
   while( !done ){
-    done = !file_get_line(line, 256, f);
     region_start = my_strtoul(line, NULL,16);
     region_end = my_strtoul(line+9,NULL,16);
     if( addr_in_segment >= region_start && addr_in_segment < region_end ){
@@ -475,6 +484,10 @@ void map_table_for_segment(uintptr_t addr_in_segment){
       my_close(f);
       return;
     }
+    /* In /proc/self/maps, the last line ends with a newline.
+       If file_get_line returns false, that means it reached EOF, from
+       after that last newline, so the buffer is empty if done is true. */
+    done = !file_get_line(line, 256, f);
   }
   my_close(f);
 }
