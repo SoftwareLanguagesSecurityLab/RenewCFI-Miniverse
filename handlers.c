@@ -72,6 +72,17 @@ bool default_is_target(uintptr_t address, uint8_t *bytes,
 bool (*is_target)(uintptr_t address, uint8_t *bytes,
                   uintptr_t code_base, size_t code_size) = &default_is_target;
 
+/* Struct used for a cache of the entries in file /proc/self/maps */
+typedef struct {
+  uintptr_t region_start;
+  uintptr_t region_end;
+  uint8_t permissions;
+  char name[7]; // Truncated start of region name
+} maps_region_t;
+
+size_t num_maps_entries = 0;
+pa_entry_t maps_entries_mem = {NULL,0};
+
 typedef struct {
   uintptr_t	address;
   size_t	size;
@@ -257,61 +268,80 @@ int my_close(int f){
   return result;
 }
 
-bool get_specific_segment(uintptr_t addr_in_segment,
-                          uintptr_t *segment_start, uintptr_t *segment_end){
+void cache_memory_maps(){
   char line[256];
-  uintptr_t region_start,region_end;
+  maps_region_t* maps = (maps_region_t*)maps_entries_mem.address;
+
+  num_maps_entries = 0;
+
   int f = my_open("/proc/self/maps", O_RDONLY);
   bool done = !file_get_line(line, 256, f);
   while( !done ){
-    region_start = my_strtoul(line, NULL,16);
-    region_end = my_strtoul(line+9,NULL,16);
-    if( addr_in_segment >= region_start && addr_in_segment < region_end ){
-      *segment_start = region_start;
-      *segment_end = region_end;
-      my_close(f);
-      return true;
+    if( num_maps_entries == 1024 ){
+      /* For now only support 1024 mapped regions so we don't have to
+         dynamically expand the mapped memory for the cache.  This should
+         be plenty for most programs. */
+      printf("FATAL ERROR: Over 1024 /proc/self/maps entries unsupported!\n"); 
+      _exit(EXIT_FAILURE);
     }
+    maps[num_maps_entries].region_start = my_strtoul(line, NULL,16);
+    maps[num_maps_entries].region_end = my_strtoul(line+9,NULL,16);
+    if( line[18] == 'r' ){
+      maps[num_maps_entries].permissions |= PROT_READ;
+    }
+    if( line[19] == 'w' ){
+      maps[num_maps_entries].permissions |= PROT_WRITE;
+    }
+    if( line[20] == 'x' ){
+      maps[num_maps_entries].permissions |= PROT_EXEC;
+    }
+    /* Copy only first 6 bytes */
+    memcpy(maps[num_maps_entries].name,line+73,6);
+    maps[num_maps_entries].name[6] = '\0';
+    num_maps_entries++;
     /* In /proc/self/maps, the last line ends with a newline.
        If file_get_line returns false, that means it reached EOF, from
        after that last newline, so the buffer is empty if done is true. */
     done = !file_get_line(line, 256, f);
   }
   my_close(f);
+}
+
+bool get_specific_segment(uintptr_t addr_in_segment,
+                          uintptr_t *segment_start, uintptr_t *segment_end){
+  maps_region_t* maps = (maps_region_t*)maps_entries_mem.address;
+  for( size_t i = 0; i < num_maps_entries; i++ ){
+    if( addr_in_segment >= maps[i].region_start && 
+        addr_in_segment < maps[i].region_end ){
+      *segment_start = maps[i].region_start;
+      *segment_end = maps[i].region_end;
+      return true;
+    }
+  }
   return false;
 }
 
 bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
-  char line[256];
-  uintptr_t region_start,region_end;
   if( range_end < range_start ){
 #ifdef DEBUG
     printf("ALERT: I REALLY don't like 0x%x-0x%x\n", range_start, range_end);
 #endif
     return false;
   }
-  int f = my_open("/proc/self/maps", O_RDONLY);
-  bool done = !file_get_line(line, 256, f);
-  while( !done ){
-    /* Extract region start and end addresses, and check if
-       memory region falls within given range.  If so, then the
-       range is not a valid candidate for new mmap */
-    region_start = my_strtoul(line, NULL,16);
-    region_end = my_strtoul(line+9,NULL,16);
-    if( (region_start >= range_start && region_start <= range_end) ||
-        (region_end >= range_start && region_end <= range_end) ){
-      my_close(f);
+  maps_region_t* maps = (maps_region_t*)maps_entries_mem.address;
+  for( size_t i = 0; i < num_maps_entries; i++ ){
+    /* Check if memory region falls within given range.  If so,
+       then the range is not a valid candidate for new mmap */
+    if( (maps[i].region_start >= range_start && 
+         maps[i].region_start <= range_end) ||
+        (maps[i].region_end >= range_start &&
+         maps[i].region_end <= range_end) ){
 #ifdef DEBUG
       printf("ALERT: I don't like 0x%x-0x%x\n", range_start, range_end);
 #endif
       return false;
     }
-    /* In /proc/self/maps, the last line ends with a newline.
-       If file_get_line returns false, that means it reached EOF, from
-       after that last newline, so the buffer is empty if done is true. */
-    done = !file_get_line(line, 256, f);
   }
-  my_close(f);
   return true;
 }
 
@@ -321,55 +351,40 @@ bool find_first_exec_segment(uintptr_t* segment_start, uintptr_t* segment_end){
      search for a "main" symbol.  I have changed this function's name from
      find_segment_with_main, and if I ever need that, I should create that
      function. */
-  char line[256];
-  uintptr_t region_start,region_end;
-  int f = my_open("/proc/self/maps", O_RDONLY);
-  bool done = !file_get_line(line, 256, f);
-  while( !done ){
-    region_start = my_strtoul(line, NULL,16);
-    region_end = my_strtoul(line+9,NULL,16);
-    if( line[18] == 'r' && line[19] == '-' && line[20] == 'x' ){
-      *segment_start = region_start;
-      *segment_end = region_end;
-      my_close(f);
+  maps_region_t* maps = (maps_region_t*)maps_entries_mem.address;
+  for( size_t i = 0; i < num_maps_entries; i++ ){
+    if( (maps[i].permissions & PROT_READ) && 
+        !(maps[i].permissions & PROT_WRITE) &&
+        (maps[i].permissions & PROT_EXEC) ){
+      *segment_start = maps[i].region_start;
+      *segment_end = maps[i].region_end;
       return true;
     }
-    /* In /proc/self/maps, the last line ends with a newline.
-       If file_get_line returns false, that means it reached EOF, from
-       after that last newline, so the buffer is empty if done is true. */
-    done = !file_get_line(line, 256, f);
   }
-  my_close(f);
   return false;
 }
 
 bool find_segment_by_name(char* name,
                           uintptr_t* segment_start, uintptr_t* segment_end){
-  char line[256];
-  uintptr_t region_start,region_end;
-  int f = my_open("/proc/self/maps", O_RDONLY);
-  bool done = !file_get_line(line, 256, f);
-  while( !done ){
-    region_start = my_strtoul(line, NULL,16);
-    region_end = my_strtoul(line+9,NULL,16);
-    if( strcmp(line+73,name) == 0 ){
-      *segment_start = region_start;
-      *segment_end = region_end;
-      my_close(f);
+  maps_region_t* maps = (maps_region_t*)maps_entries_mem.address;
+  for( size_t i = 0; i < num_maps_entries; i++ ){
+    /* Compare only the first 6 bytes of the name, as it's all that is
+       currently stored in the cached entries from /proc/self/maps.
+       If I ever need more characters than this, I will need to change
+       how much is stored, which may require more memory to be allocated
+       for the memory map entries */
+    if( strncmp(maps[i].name,name,6) == 0 ){
+      *segment_start = maps[i].region_start;
+      *segment_end = maps[i].region_end;
       return true;
     }
-    /* In /proc/self/maps, the last line ends with a newline.
-       If file_get_line returns false, that means it reached EOF, from
-       after that last newline, so the buffer is empty if done is true. */
-    done = !file_get_line(line, 256, f);
   }
-  my_close(f);
   return false;
 }
 
 void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
-  uintptr_t caller_seg_start;
-  uintptr_t caller_seg_end;
+  uintptr_t caller_seg_start = 0;
+  uintptr_t caller_seg_end = 0;
   uintptr_t first_exec_seg_start;
   uintptr_t first_exec_seg_end;
   uintptr_t vdso_seg_start;
@@ -457,39 +472,30 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
 }
 
 void map_table_for_segment(uintptr_t addr_in_segment){
-  char line[256];
-  uintptr_t region_start,region_end;
-  int f = my_open("/proc/self/maps", O_RDONLY);
   void* mapped_addr;
-  bool done = !file_get_line(line, 256, f);
-  while( !done ){
-    region_start = my_strtoul(line, NULL,16);
-    region_end = my_strtoul(line+9,NULL,16);
-    if( addr_in_segment >= region_start && addr_in_segment < region_end ){
+  maps_region_t* maps = (maps_region_t*)maps_entries_mem.address;
+  for( size_t i = 0; i < num_maps_entries; i++ ){
+    if( addr_in_segment >= maps[i].region_start &&
+        addr_in_segment < maps[i].region_end ){
       /* Map a memory region at a fixed offset from the code with an empty
        * table indicating no lookups should be done */
-      mapped_addr = __real_mmap((void*)(region_start*4+fixed_offset),
-                                (region_end-region_start)*4,
+      mapped_addr = __real_mmap((void*)(maps[i].region_start*4+fixed_offset),
+                                (maps[i].region_end-maps[i].region_start)*4,
                                 PROT_WRITE|PROT_READ,
                                 MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
       if( mapped_addr == MAP_FAILED ){
         printf("FATAL ERROR: Could not map table region at 0x%x-0x%x\n",
-               (region_start*4+fixed_offset),
-               (region_start*4+fixed_offset)+(region_end-region_start)*4);
+               (maps[i].region_start*4+fixed_offset),
+               (maps[i].region_start*4+fixed_offset)+
+                 (maps[i].region_end-maps[i].region_start)*4);
         _exit(EXIT_FAILURE);
       }
       /* We do not perform a lookup if a byte is zero, the default value in
          the allocated region.  If this were to change, we would need to fill
          every 4th byte with a new value indicating no lookup is needed */
-      my_close(f);
       return;
     }
-    /* In /proc/self/maps, the last line ends with a newline.
-       If file_get_line returns false, that means it reached EOF, from
-       after that last newline, so the buffer is empty if done is true. */
-    done = !file_get_line(line, 256, f);
   }
-  my_close(f);
 }
 
 #ifdef RECORD_STATS
@@ -536,6 +542,8 @@ void register_handler(bool (*my_is_target)(uintptr_t address, uint8_t *bytes,
   sigemptyset(&new_action.sa_mask); /* Don't block other signals */
   new_action.sa_flags = SA_SIGINFO; /* Specifies we want to use sa_sigaction */
   sigaction( SIGSEGV, &new_action, &old_action );
+  page_alloc(&maps_entries_mem, 0x4000);
+  cache_memory_maps();
   /* Record the starting and ending addresses of the region the rewriter is in.
      This will allow us to detect if a segfault occurs inside miniverse. */
   get_specific_segment((uintptr_t)&gen_code,
@@ -970,6 +978,9 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      * Assume for now that the code was indeed called. */
     uintptr_t caller_address = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
 
+    /* Re-cache memory maps in case new regions have been mapped since the
+       segfault handler was registered */
+    cache_memory_maps();
     set_fixed_offset(segfault_region->address, caller_address);
   }
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
