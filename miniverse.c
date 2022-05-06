@@ -7,6 +7,7 @@
 
 #define DO_RET_LOOKUPS 1
 #define PUSH_OLD_ADDRESSES 1
+#define KERNEL_VSYSCALL_OPTIMIZATION 1
 
 #define NOP 0x90
 #define RET_NEAR 0xc3
@@ -1039,34 +1040,41 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
   code->offset += sizeof(indirect_template_after)-1;
   
   /* Second half */ 
+  if( insn->id == SS_INS_CALL ){
 #ifdef PUSH_OLD_ADDRESSES
-  if( insn->id == SS_INS_CALL ){
-    gen_padding(code, insn,
-                sizeof(indirect_template_mask_push_jmp)-1, is_target);
-    memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
-                                     sizeof(indirect_template_mask_push_jmp)-1);
-    /* Patch template with return address from old code */
-    *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
-    code->offset += sizeof(indirect_template_mask_push_jmp)-1;
-  }else{
-    gen_padding(code, insn, sizeof(indirect_template_mask_jmp)-1, is_target);
-    memcpy( code->code+code->offset, indirect_template_mask_jmp,
-                                     sizeof(indirect_template_mask_jmp)-1);
-    code->offset += sizeof(indirect_template_mask_jmp)-1;
-  }
+#ifdef KERNEL_VSYSCALL_OPTIMIZATION
+    /* If instruction is call DWORD PTR gs:0x10*/
+    if( *((uint32_t*)insn->bytes) == 0x1015ff65 &&
+        *((uint32_t*)(insn->bytes+3)) == 0x00000010 ){
+      /* With a call to __kernel_vsyscall, don't convert to push/jump,
+         just leave as a call instead */
+      gen_padding(code, insn, sizeof(indirect_template_mask_call)-1, is_target);
+      memcpy( code->code+code->offset, indirect_template_mask_call,
+                                     sizeof(indirect_template_mask_call)-1);
+      code->offset += sizeof(indirect_template_mask_call)-1;
+    }else
+#endif
+    {
+      gen_padding(code, insn,
+                  sizeof(indirect_template_mask_push_jmp)-1, is_target);
+      memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
+              sizeof(indirect_template_mask_push_jmp)-1);
+      /* Patch template with return address from old code */
+      *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
+      code->offset += sizeof(indirect_template_mask_push_jmp)-1;
+    }
 #else
-  if( insn->id == SS_INS_CALL ){
     gen_padding(code, insn, sizeof(indirect_template_mask_call)-1, is_target);
     memcpy( code->code+code->offset, indirect_template_mask_call,
                                      sizeof(indirect_template_mask_call)-1);
     code->offset += sizeof(indirect_template_mask_call)-1;
+#endif
   }else{
     gen_padding(code, insn, sizeof(indirect_template_mask_jmp)-1, is_target);
     memcpy( code->code+code->offset, indirect_template_mask_jmp,
                                      sizeof(indirect_template_mask_jmp)-1);
     code->offset += sizeof(indirect_template_mask_jmp)-1;
   }
-#endif
 
   /* Generate a relocation entry to patch the ORIGINAL text section */
   /*gen_reloc(code, RELOC_IND, saved_off, insn->address);*/
