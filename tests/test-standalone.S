@@ -14,7 +14,7 @@ load_miniverse_asm:
   push eax
   push 0x2
   push 0x5
-  push 0xa0aab
+  push 0xa0beb
   push 0xdeadb000
   call mini_mmap
   add esp,24
@@ -44,7 +44,7 @@ pic2:
   sub ebx,ecx
   sub eax,ebx
   push eax
-  mov eax, 0xdeae5374
+  mov eax, 0xdeae5332
   call eax
   pop eax
   // Close fd

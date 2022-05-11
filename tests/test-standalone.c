@@ -48,7 +48,7 @@ void load_miniverse_simple(){
    * and will need to be changed */
   /* Code segment */
   /* (length is starting offset plus memory size of third program header) */
-  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xa0aab, PROT_READ|PROT_EXEC,
+  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xa0beb, PROT_READ|PROT_EXEC,
                             MAP_PRIVATE,fd,0);
   if( mini_exec != (uint8_t*)0xdeadb000 ){
     abort();
@@ -73,7 +73,7 @@ void load_miniverse_simple(){
 
   /* Set pointer to register_handler function */
   void (*register_handler)(bool (*)(uintptr_t, uint8_t *,uintptr_t, size_t));
-  register_handler = (void(*)(bool(*)(uintptr_t,uint8_t*,uintptr_t,size_t)))0xdeae5374;
+  register_handler = (void(*)(bool(*)(uintptr_t,uint8_t*,uintptr_t,size_t)))0xdeae5332;
   register_handler(&my_is_target);
 
   close(fd);
@@ -100,7 +100,7 @@ void load_miniverse(){
    * and will need to be changed */
   /* Code segment */
   /* (length is starting offset plus memory size of third program header) */
-  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xa0aab, PROT_READ|PROT_EXEC,
+  uint8_t *mini_exec = mmap((void*)0xdeadb000, 0xa0beb, PROT_READ|PROT_EXEC,
                             MAP_PRIVATE,fd,0);
   if( mini_exec != (uint8_t*)0xdeadb000 ){
     fprintf( stderr, "Error %d: Could not mmap executable miniverse region.\n", errno );
@@ -128,7 +128,7 @@ void load_miniverse(){
 
   /* Set pointer to register_handler function */
   void (*register_handler)(bool (*)(uintptr_t, uint8_t *,uintptr_t, size_t));
-  register_handler = (void(*)(bool(*)(uintptr_t,uint8_t*,uintptr_t,size_t)))0xdeae5374;
+  register_handler = (void(*)(bool(*)(uintptr_t,uint8_t*,uintptr_t,size_t)))0xdeae5332;
   register_handler(&my_is_target);
   
 }
@@ -140,11 +140,11 @@ int main(int argc, char** argv){
 
   /* Set pointer to wrap_mmap function */
   void (*wrap_mmap)(void*,size_t,int,int,int,off_t);
-  wrap_mmap = (void(*)(void*,size_t,int,int,int,off_t))0xdeae544b;
+  wrap_mmap = (void(*)(void*,size_t,int,int,int,off_t))0xdeae5409;
 
   /* Set pointer to wrap_mprotect function */
   void (*wrap_mprotect)(void*,size_t,int);
-  wrap_mprotect = (void(*)(void*,size_t,int))0xdeae5521;
+  wrap_mprotect = (void(*)(void*,size_t,int))0xdeae54df;
 
   uint8_t orig_code[] = "\x8b\x44\x24\x04\x83\xf8\x00\x74\x14\xb8\x19\x00\x00\x07\xc3\x6d\x6f\x64\x65\x3a\x20\x25\x64\x0a\x00\x25\x73\x0a\x00\xb8\x0f\x00\x00\x07\xc3\x90\xeb\xfe\xe9\xff\xff\xff\xfe";
  

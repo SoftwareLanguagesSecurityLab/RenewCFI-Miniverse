@@ -104,6 +104,28 @@ uint8_t indirect_template_mask_jmp[] = "\x24\xf0\x50\x58\x58\xff\x64\x24\xf8";
 /* Call [esp-8] */
 uint8_t indirect_stack_call_template[] = "\xff\x54\x24\xf8";
 
+/* Intel's recommended multi-byte nops */
+const uint8_t nop_table[][17] = {
+  "\xf4", // hlt
+  "\x90", // nop
+  "\x66\x90", // 66 nop
+  "\x0f\x1f\x00", // nop [eax]
+  "\x0f\x1f\x40\x00", // nop [eax+0x00]
+  "\x0f\x1f\x44\x00\x00", // nop [eax+eax*1+0x00]
+  "\x66\x0f\x1f\x44\x00\x00", //66 nop [eax+eax*1+0x00]
+  "\x0f\x1f\x80\x00\x00\x00\x00", // nop [eax+0x00000000]
+  "\x0f\x1f\x84\x00\x00\x00\x00\x00", // nop [eax+eax*1+0x00000000]
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00", // 66 nop [eax+eax*1+0x100000000]
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x90", // 9+1
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x66\x90", // 9+2
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x0f\x1f\x00", // 9+3
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x0f\x1f\x40\x00", // 9+4
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x0f\x1f\x44\x00\x00", // 9+5
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x66\x0f\x1f\x44\x00\x00", // 9+6
+  "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00\x0f\x1f\x80\x00\x00\x00\x00", // 9+7
+  "\xf4" // hlt
+};
+
 bool is_pic(mv_code_t *code, uintptr_t address);
 
 void gen_insn(mv_code_t *code, ss_insn *insn);
@@ -1107,20 +1129,25 @@ void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size, bool is_targ
        -An instruction determined to be an indirect jump target by the is_target callback
     Fill the padded area with NOP instructions.
   */
-  if( code->offset % CHUNK_SIZE != 0 &&
+  unsigned int bytes_into_chunk = code->offset % CHUNK_SIZE;
+  unsigned int bytes_to_chunk_end = CHUNK_SIZE - bytes_into_chunk;
+  if( bytes_into_chunk != 0 &&
       ( (is_target) ||
-      (CHUNK_SIZE - (code->offset % CHUNK_SIZE) < new_size) ) ){
-    memset(code->code+code->offset, NOP, CHUNK_SIZE - (code->offset % CHUNK_SIZE));
-    code->offset += CHUNK_SIZE - (code->offset % CHUNK_SIZE);
+      (bytes_to_chunk_end < new_size) ) ){
+    memcpy(code->code+code->offset, nop_table[bytes_to_chunk_end], 
+                                    bytes_to_chunk_end);
+    code->offset += bytes_to_chunk_end;
   }
   /* We need to ensure all call
      instructions are padded to right before the end of a chunk.
   */
+  bytes_into_chunk = (code->offset + new_size) % CHUNK_SIZE;
   if( (insn->id == SS_INS_CALL) &&
-      ( (code->offset + new_size) % CHUNK_SIZE != 0) ){
-    memset(code->code+code->offset, NOP,
-      CHUNK_SIZE - ((code->offset + new_size) % CHUNK_SIZE));
-    code->offset += CHUNK_SIZE - ((code->offset + new_size) % CHUNK_SIZE);
+      ( bytes_into_chunk != 0) ){
+    bytes_to_chunk_end = CHUNK_SIZE - bytes_into_chunk;
+    memcpy(code->code+code->offset, nop_table[bytes_to_chunk_end],
+                                    bytes_to_chunk_end);
+    code->offset += bytes_to_chunk_end;
   }
 }
 
@@ -1165,12 +1192,6 @@ void check_target(mv_code_t *code, ss_insn *insn, bool is_target){
       //assert( (code->offset & ~code->mask) == (uintptr_t)CHUNK_SIZE-5 );
     }
 #endif
-    /* If instruction is a target, not a call, and there is no nop already,
-       insert one nop */
-    if( insn->id != SS_INS_CALL &&
-        code->code[code->offset] != TARGET_LABEL ){
-      *(code->code+code->offset++) = TARGET_LABEL;
-    }
     /* Generate a relocation entry to patch the ORIGINAL text section at
        this target address */
     /* Subtract to get to chunk-aligned 0x90 */
