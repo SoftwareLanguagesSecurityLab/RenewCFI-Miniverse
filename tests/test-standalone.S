@@ -30,8 +30,8 @@ load_miniverse_asm:
   call mini_mmap
   add esp,24
   // Memset bss to 0
-  mov eax, 0xdeb8ce78
-  mov ecx, 0x4188
+  mov eax, 0xdeb8ce98
+  mov ecx, 0x4168
   call mini_memset
   // Call register_handler
   // Doing some fiddling to avoid having to know offset of my_is_target
@@ -44,7 +44,7 @@ pic2:
   sub ebx,ecx
   sub eax,ebx
   push eax
-  mov eax, 0xdeae5332
+  mov eax, 0xdeae52bc
   call eax
   pop eax
   // Close fd

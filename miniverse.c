@@ -96,9 +96,9 @@ uint8_t pop_jmp_imm_template_mask[] = "\x80\xa4\x24\xff\xff\xff\xff\xf0\xff\xa4\
 uint8_t indirect_template_before[] = "\x50\x8b";
 uint8_t indirect_template_after[] = "\xf6\x04\x85\x00\x00\x00\x40\x03\x0f\x45\x04\x85\x00\x00\x00\x40";
 #ifdef PUSH_OLD_ADDRESSES
-uint8_t indirect_template_mask_push_jmp[] = "\x24\xf0\x50\x58\x58\x68\xff\xff\xff\xff\xff\x64\x24\xfc";
+uint8_t indirect_template_mask_push_jmp[] = "\x66\x90\x24\xf0\x50\x58\x58\x68\xff\xff\xff\xff\xff\x64\x24\xfc";
 #endif
-uint8_t indirect_template_mask_call[] = "\x24\xf0\x50\x58\x58\xff\x54\x24\xf8";
+uint8_t indirect_template_mask_call[] = "\x0f\x1f\x80\x00\x00\x00\x00\x24\xf0\x50\x58\x58\xff\x54\x24\xf8";
 uint8_t indirect_template_mask_jmp[] = "\x24\xf0\x50\x58\x58\xff\x64\x24\xf8";
 
 /* Call [esp-8] */
@@ -133,7 +133,7 @@ static inline void gen_ret(mv_code_t *code, ss_insn *insn);
 static inline void gen_cond(mv_code_t *code, ss_insn *insn);
 static inline void gen_uncond(mv_code_t *code, ss_insn *insn);
 void gen_indirect(mv_code_t *code, ss_insn *insn);
-void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size, bool is_target);
+void gen_padding(mv_code_t *code, uint16_t new_size, bool is_target);
 void check_target(mv_code_t *code, ss_insn *insn, bool is_target);
 void gen_reloc(mv_code_t *code, uint8_t type, uint32_t offset, uintptr_t target);
 size_t sort_relocs(mv_code_t *code);
@@ -422,7 +422,7 @@ void gen_insn(mv_code_t* code, ss_insn *insn){
       clock_gettime(CLOCK_MONOTONIC, &start_time);
 #endif
       bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
-      gen_padding(code, insn, insn->size, is_target); 
+      gen_padding(code, insn->size, is_target); 
       check_target(code, insn, is_target);
 #ifndef PUSH_OLD_ADDRESSES
       /* Special case code for call to PIC, specifically the get_pc_thunk pattern.
@@ -507,7 +507,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
 #ifdef PUSH_OLD_ADDRESSES
   if( *(insn->bytes) != RET_NEAR_IMM ){
     /* Conditionally load mapping entry */
-    gen_padding(code,insn,sizeof(pop_jmp_template)-1,is_target);
+    gen_padding(code,sizeof(pop_jmp_template)-1,is_target);
     check_target(code,insn,is_target);
     memcpy(code->code+code->offset, pop_jmp_template,
         sizeof(pop_jmp_template)-1);
@@ -516,7 +516,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     code->offset += sizeof(pop_jmp_template)-1;
 
     /* Conditional mov is in separate chunk for fixed lookup offset */
-    gen_padding(code,insn,sizeof(pop_jmp_template2)-1,is_target);
+    gen_padding(code,sizeof(pop_jmp_template2)-1,is_target);
     memcpy(code->code+code->offset, pop_jmp_template2,
         sizeof(pop_jmp_template2)-1);
     /* Patch fixed offset value into instruction encoding */
@@ -524,13 +524,13 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     code->offset += sizeof(pop_jmp_template2)-1;
 
     /* Mask address regardless of source (in new chunk) */
-    gen_padding(code,insn,sizeof(pop_jmp_template_mask)-1,is_target);
+    gen_padding(code,sizeof(pop_jmp_template_mask)-1,is_target);
     memcpy(code->code+code->offset, pop_jmp_template_mask,
         sizeof(pop_jmp_template_mask)-1);
     code->offset += sizeof(pop_jmp_template_mask)-1;
   }else{
     /* Conditionally load mapping entry */
-    gen_padding(code,insn,sizeof(pop_jmp_template)-1,is_target);
+    gen_padding(code,sizeof(pop_jmp_template)-1,is_target);
     check_target(code,insn,is_target);
     memcpy(code->code+code->offset, pop_jmp_template,
         sizeof(pop_jmp_template)-1);
@@ -539,7 +539,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     code->offset += sizeof(pop_jmp_template)-1;
     
     /* Adjust stack pointer */
-    gen_padding(code,insn,sizeof(pop_jmp_template2)-1,is_target);
+    gen_padding(code,sizeof(pop_jmp_template2)-1,is_target);
     memcpy(code->code+code->offset, pop_jmp_template2,
         sizeof(pop_jmp_template2)-1);
     /* Copy fixed offset value into instruction encoding */
@@ -554,14 +554,14 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
     /* We do not need to worry about the upper bits at all because ret <imm>
        appears to interpret the immediate as unsigned, so we can always leave
        the upper bits zero */
-    gen_padding(code,insn,sizeof(pop_jmp_imm_template)-1,is_target);
+    gen_padding(code,sizeof(pop_jmp_imm_template)-1,is_target);
     memcpy(code->code+code->offset, pop_jmp_imm_template,
         sizeof(pop_jmp_imm_template)-1);
     *(uint16_t*)(code->code+code->offset+5) = 4 + *(uint16_t*)(insn->bytes+1);
     code->offset += sizeof(pop_jmp_imm_template)-1;
     
     /* Mask address regardless of source (in new chunk) */
-    gen_padding(code,insn,sizeof(pop_jmp_imm_template_mask)-1,is_target);
+    gen_padding(code,sizeof(pop_jmp_imm_template_mask)-1,is_target);
     memcpy(code->code+code->offset, pop_jmp_imm_template_mask,
         sizeof(pop_jmp_imm_template_mask)-1);
     /* Patch and instr and jmp instr with immediate value from ret <imm> */
@@ -583,13 +583,13 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
   }
 
   /* Conditionally load mapping entry */
-  gen_padding(code, insn, sizeof(ret_template)-1, is_target);
+  gen_padding(code, sizeof(ret_template)-1, is_target);
   check_target(code, insn, is_target);
   memcpy(code->code+code->offset, ret_template, sizeof(ret_template)-1);
   code->offset += sizeof(ret_template)-1;
   
   /* Mask address regardless of source (in new chunk) */
-  gen_padding(code, insn, sizeof(ret_template_mask)-1+ret_size, is_target);
+  gen_padding(code, sizeof(ret_template_mask)-1+ret_size, is_target);
   memcpy(code->code+code->offset,ret_template_mask,sizeof(ret_template_mask)-1);
   code->offset += sizeof(ret_template_mask)-1;
   
@@ -611,7 +611,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
        new_code_size = 10;
      }
      /* Mask value at esp (the return address) to ensure return can only go to aligned chunk */
-     gen_padding(code, insn, new_code_size, is_target); 
+     gen_padding(code, new_code_size, is_target); 
      check_target(code, insn, is_target);
      *(code->code+code->offset) = 0x81;// AND r/m32, imm 32
      *(code->code+code->offset+1) = 0x24;// r/m byte
@@ -640,7 +640,7 @@ inline void gen_cond(mv_code_t *code, ss_insn *insn){
   /* TODO: Handle size prefixes (that switch 32-bit argument to 16-bit argument) */
   if( *(insn->bytes) == JCC_REL_NEAR  ){
     /* JCC with 4-byte offset (6-byte instruction) */
-    gen_padding(code, insn, 6, is_target); 
+    gen_padding(code, 6, is_target); 
     check_target(code, insn, is_target);
     /* Write instruction opcode in manually instead of using memcpy call */
     *(code->code+code->offset) = JCC_REL_NEAR;
@@ -666,7 +666,7 @@ inline void gen_cond(mv_code_t *code, ss_insn *insn){
        loopinstr:
          loop jmpinstr
     */
-    gen_padding(code, insn, 9, is_target);
+    gen_padding(code, 9, is_target);
     check_target(code, insn, is_target);
     /* write opcode bytes for the three instructions */
     *(code->code+code->offset) = JMP_REL_SHORT;
@@ -682,7 +682,7 @@ inline void gen_cond(mv_code_t *code, ss_insn *insn){
     code->offset += 9;
   }else{
     /* JCC with 1-byte offset (2-byte instruction) */
-    gen_padding(code, insn, 6, is_target); 
+    gen_padding(code, 6, is_target); 
     check_target(code, insn, is_target);
     /* Do not need to copy instruction bytes here because we will be writing the opcode manually.
        The bytes past the opcode will be patched in the relocation entry pass. */
@@ -734,7 +734,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         /* If direct jump is to a JIT region that isn't the current one being
            rewritten, change to indirect jump that performs a lookup of
            this address by putting the jump target just outside the stack. */
-        gen_padding(code, insn, 11, is_target);
+        gen_padding(code, 11, is_target);
         check_target(code, insn, is_target);
         *(code->code+code->offset+0) = 0x83; // sub esp,4
         *(code->code+code->offset+1) = 0xec; // sub esp,4
@@ -748,7 +748,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
 
         /* Essentially generate a very specific instance of indirect jump */
 
-        gen_padding(code, insn, 5, false);
+        gen_padding(code, 5, false);
         *(code->code+code->offset++) = indirect_template_before[0];
         *(code->code+code->offset++) = indirect_template_before[1];
         /* Write our custom memory addressing encoding, representing
@@ -757,7 +757,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         *(code->code+code->offset++) = 0x24; // SIB
         *(code->code+code->offset++) = 0xfc; // Single-byte displacement
 
-        gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target);
+        gen_padding(code, sizeof(indirect_template_after)-1, is_target);
         memcpy( code->code+code->offset, indirect_template_after,
                 sizeof(indirect_template_after)-1);
         /* Patch fixed offset value into instruction encodings */
@@ -765,8 +765,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         *(uintptr_t*)(code->code+code->offset+12) = fixed_offset;
         code->offset += sizeof(indirect_template_after)-1;
 
-        gen_padding( code, insn,
-                     sizeof(indirect_template_mask_jmp)-1, is_target);
+        gen_padding( code, sizeof(indirect_template_mask_jmp)-1, is_target);
         memcpy( code->code+code->offset, indirect_template_mask_jmp,
                 sizeof(indirect_template_mask_jmp)-1);
         code->offset += sizeof(indirect_template_mask_jmp)-1;
@@ -776,7 +775,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
 
         break;
       }
-      gen_padding(code, insn, 5, is_target); 
+      gen_padding(code, 5, is_target); 
       check_target(code, insn, is_target);
       *(code->code+code->offset) = *(insn->bytes+start_offset);
       /* Relocation target is instruction address + instruction length +
@@ -810,7 +809,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
            not include bytes from add; the padding will align the call to the
            end of a chunk, so the add
            will be safely at the start of the next chunk */
-        gen_padding(code, insn, 10, is_target); 
+        gen_padding(code, 10, is_target); 
         check_target(code, insn, is_target);
         *(code->code+code->offset) = 0x68; // push imm32
         *(uint32_t*)(code->code+code->offset+1) = insn->address + insn->size; // return address
@@ -847,7 +846,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
            push the old address on the stack so that our rewritten return
            instructions won't try to read from unallocated memory trying to
            look up new addresses. */
-        gen_padding(code, insn, 11, is_target);
+        gen_padding(code, 11, is_target);
         check_target(code, insn, is_target);
         *(code->code+code->offset+0) = 0x83; // sub esp,4
         *(code->code+code->offset+1) = 0xec; // sub esp,4
@@ -861,7 +860,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
 
         /* Essentially generate a very specific instance of indirect call */
 
-        gen_padding(code, insn, 5, false);
+        gen_padding(code, 5, false);
         *(code->code+code->offset++) = indirect_template_before[0];
         *(code->code+code->offset++) = indirect_template_before[1];
         /* Write our custom memory addressing encoding, representing
@@ -870,7 +869,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         *(code->code+code->offset++) = 0x24; // SIB
         *(code->code+code->offset++) = 0xfc; // Single-byte displacement
 
-        gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target);
+        gen_padding(code, sizeof(indirect_template_after)-1, is_target);
         memcpy( code->code+code->offset, indirect_template_after,
                 sizeof(indirect_template_after)-1);
         /* Patch fixed offset value into instruction encodings */
@@ -878,12 +877,11 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         *(uintptr_t*)(code->code+code->offset+12) = fixed_offset;
         code->offset += sizeof(indirect_template_after)-1;
 
-        gen_padding( code, insn,
-                     sizeof(indirect_template_mask_push_jmp)-1, is_target);
+        gen_padding( code, sizeof(indirect_template_mask_push_jmp)-1, true);
         memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
                 sizeof(indirect_template_mask_push_jmp)-1);
         /* Patch template with return address from old code */
-        *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
+        *(uint32_t*)(code->code+code->offset+8) = insn->address + insn->size;
         code->offset += sizeof(indirect_template_mask_push_jmp)-1;
 
         code->last_safe_offset = code->offset;
@@ -894,7 +892,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       /* The default if none of the previous conditions apply:
          this instruction must be calling a non-jit region, so just leave
          it as a direct call and push a new return address */
-      gen_padding(code, insn, 5, is_target); 
+      gen_padding(code, 5, is_target); 
       check_target(code, insn, is_target);
       *(code->code+code->offset) = *(insn->bytes+start_offset);
       /* Relocation target is instruction address + instruction length +
@@ -907,7 +905,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       break;
     /* Jump with 1-byte offset (2-byte instruction) */
     case JMP_REL_SHORT:
-      gen_padding(code, insn, 5, is_target); 
+      gen_padding(code, 5, is_target); 
       check_target(code, insn, is_target);
       /* Special case where we must extend the instruction to its longer form */
       disp = *(int8_t*)(insn->bytes+start_offset+1);
@@ -996,21 +994,21 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
       case 0x04:
         /* We add 4 because we need to add a 4-byte displacement;
            addressing mode includes no displacement */
-        gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                                insn->size-1+4+start_offset, is_target);
+        gen_padding(code, sizeof(indirect_template_before)-1 +
+                          insn->size-1+4+start_offset, is_target);
         new_disp = 0x04;
         break;
       case 0x44:
         /* We add 3 because we'll expand the 1-byte displacement to 4;
            the 1-byte displacement is probably enough, but we'll be cautious */
-        gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                                insn->size-1+3+start_offset, is_target);
+        gen_padding(code, sizeof(indirect_template_before)-1 +
+                          insn->size-1+3+start_offset, is_target);
         new_disp = (int8_t)insn->bytes[start_offset+3]+0x04;
         break;
       case 0x84:
         /* This already has a 4-byte displacement, so generate normal padding */
-        gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                                insn->size-1+start_offset, is_target);
+        gen_padding(code, sizeof(indirect_template_before)-1 +
+                          insn->size-1+start_offset, is_target);
         new_disp = *(int32_t*)(insn->bytes+start_offset+3)+0x04;
         break;
     }
@@ -1030,8 +1028,8 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     *(uint32_t*)(code->code+code->offset) = new_disp;
     code->offset += 4;
   }else{
-    gen_padding(code, insn, sizeof(indirect_template_before)-1 +
-                            insn->size-1+4+start_offset, is_target);
+    gen_padding(code, sizeof(indirect_template_before)-1 +
+                      insn->size-1+4+start_offset, is_target);
     check_target(code, insn, is_target);
     *(code->code+code->offset++) = indirect_template_before[0];
     /* Insert prefix before mov instruction in template
@@ -1053,7 +1051,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
       code->offset += insn->size-start_offset-2;
     }
   }
-  gen_padding(code, insn, sizeof(indirect_template_after)-1, is_target); 
+  gen_padding(code, sizeof(indirect_template_after)-1, is_target); 
   memcpy( code->code+code->offset, indirect_template_after,
                                    sizeof(indirect_template_after)-1);
   /* Patch fixed offset value into instruction encodings */
@@ -1070,29 +1068,28 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
         *((uint32_t*)(insn->bytes+3)) == 0x00000010 ){
       /* With a call to __kernel_vsyscall, don't convert to push/jump,
          just leave as a call instead */
-      gen_padding(code, insn, sizeof(indirect_template_mask_call)-1, is_target);
+      gen_padding(code, sizeof(indirect_template_mask_call)-1, true);
       memcpy( code->code+code->offset, indirect_template_mask_call,
                                      sizeof(indirect_template_mask_call)-1);
       code->offset += sizeof(indirect_template_mask_call)-1;
     }else
 #endif
     {
-      gen_padding(code, insn,
-                  sizeof(indirect_template_mask_push_jmp)-1, is_target);
+      gen_padding(code, sizeof(indirect_template_mask_push_jmp)-1, true);
       memcpy( code->code+code->offset, indirect_template_mask_push_jmp,
               sizeof(indirect_template_mask_push_jmp)-1);
       /* Patch template with return address from old code */
-      *(uint32_t*)(code->code+code->offset+6) = insn->address + insn->size;
+      *(uint32_t*)(code->code+code->offset+8) = insn->address + insn->size;
       code->offset += sizeof(indirect_template_mask_push_jmp)-1;
     }
 #else
-    gen_padding(code, insn, sizeof(indirect_template_mask_call)-1, is_target);
+    gen_padding(code, sizeof(indirect_template_mask_call)-1, true);
     memcpy( code->code+code->offset, indirect_template_mask_call,
                                      sizeof(indirect_template_mask_call)-1);
     code->offset += sizeof(indirect_template_mask_call)-1;
 #endif
   }else{
-    gen_padding(code, insn, sizeof(indirect_template_mask_jmp)-1, is_target);
+    gen_padding(code, sizeof(indirect_template_mask_jmp)-1, is_target);
     memcpy( code->code+code->offset, indirect_template_mask_jmp,
                                      sizeof(indirect_template_mask_jmp)-1);
     code->offset += sizeof(indirect_template_mask_jmp)-1;
@@ -1114,7 +1111,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
   
 }
 
-void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size, bool is_target){
+void gen_padding(mv_code_t *code, uint16_t new_size, bool is_target){
   if( new_size > CHUNK_SIZE ){
     printf("WARNING: Size of %d too large to fit in chunk!\n", new_size);
   }
@@ -1135,17 +1132,6 @@ void gen_padding(mv_code_t *code, ss_insn *insn, uint16_t new_size, bool is_targ
       ( (is_target) ||
       (bytes_to_chunk_end < new_size) ) ){
     memcpy(code->code+code->offset, nop_table[bytes_to_chunk_end], 
-                                    bytes_to_chunk_end);
-    code->offset += bytes_to_chunk_end;
-  }
-  /* We need to ensure all call
-     instructions are padded to right before the end of a chunk.
-  */
-  bytes_into_chunk = (code->offset + new_size) % CHUNK_SIZE;
-  if( (insn->id == SS_INS_CALL) &&
-      ( bytes_into_chunk != 0) ){
-    bytes_to_chunk_end = CHUNK_SIZE - bytes_into_chunk;
-    memcpy(code->code+code->offset, nop_table[bytes_to_chunk_end],
                                     bytes_to_chunk_end);
     code->offset += bytes_to_chunk_end;
   }
