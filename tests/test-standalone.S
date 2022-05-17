@@ -44,7 +44,7 @@ pic2:
   sub ebx,ecx
   sub eax,ebx
   push eax
-  mov eax, 0xdeae52bc
+  mov eax, 0xdeae529f
   call eax
   pop eax
   // Close fd

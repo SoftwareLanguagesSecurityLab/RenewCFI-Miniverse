@@ -5,8 +5,7 @@
      -An interrupt handler for SIGSEGV, only for handling when a page marked
       W (by our previous functions?) is attempting to be executed.  This
       triggers the rewriter and redirects the original call from the writable
-      page to the new rewritten executable page.  It also should set the
-      original writable page to only be readable, I think....
+      page to the new rewritten executable page.
 */
 //#define DEBUG
 #include <sys/mman.h>
@@ -89,7 +88,6 @@ typedef struct {
   bool		rewritten;
   uintptr_t	new_address;
   size_t	new_size;
-  pa_entry_t	backup; /* Backup copy of original bytes */
   pa_entry_t	mapping;
 } code_region_t;
 
@@ -155,8 +153,6 @@ void add_code_region(uintptr_t address, size_t size){
   region->rewritten = false;
   region->new_address = 0;
   region->new_size = 0;
-  region->backup.address = 0;
-  region->backup.size = 0;
   region->mapping.address = 0;
   region->mapping.size = 0;
   num_code_regions++;
@@ -481,7 +477,7 @@ void map_table_for_segment(uintptr_t addr_in_segment){
        * table indicating no lookups should be done */
       mapped_addr = __real_mmap((void*)(maps[i].region_start*4+fixed_offset),
                                 (maps[i].region_end-maps[i].region_start)*4,
-                                PROT_WRITE|PROT_READ,
+                                PROT_READ,
                                 MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0);
       if( mapped_addr == MAP_FAILED ){
         printf("FATAL ERROR: Could not map table region at 0x%x-0x%x\n",
@@ -626,21 +622,18 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
      or handler at the same time! */
   while( __atomic_test_and_set(&miniverse_lock, __ATOMIC_ACQUIRE) );
   code_region_t* region;
+
 #ifdef DEBUG
   printf("(mprotect) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
 #endif
 
-  /* Force len to be a multiple of the page size, which mprotect implicitly
-     does already, since it changes permissions at a page granularity.
-     I assume large pages are not being used. */
-  if( (len & 0xfffff000) < len ){
-    len = (len & 0xfffff000) + 0x1000;
-  }
-
   if( (prot & PROT_EXEC) ){
-#ifdef DEBUG
-  printf("(mprotect YES) ADDR: 0x%x EXEC: %d WRITE: %d READ: %d\n", (uintptr_t)addr, PROT_EXEC&prot, PROT_WRITE&prot, PROT_READ&prot);
-#endif
+    /* Force len to be a multiple of the page size, which mprotect implicitly
+       does already, since it changes permissions at a page granularity.
+       I assume large pages are not being used. */
+    if( (len & 0xfffff000) < len ){
+      len = (len & 0xfffff000) + 0x1000;
+    }
     add_code_region((uintptr_t)addr, len); 
     /* Always unset the exec bit if set */
     prot &= ~PROT_EXEC;
@@ -665,74 +658,17 @@ int __wrap_mprotect(void *addr, size_t len, int prot){
         printf("Rewriting 0x%x (size 0x%x) early!\n", region->address, region->size);
 #endif
         rewrite_region(region);
-      }
-      /* Indicate success; permissions for region are now RW regardless of
-         original arguments to mprotect intending to make it non-writable */
-      __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
+        /* Indicate success; permissions for region are set in rewrite_region
+           and ignore the original arguments to mprotect */
+        __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
 #ifdef RECORD_STATS
-      clock_gettime(CLOCK_MONOTONIC, &end_time);
-      mprotect_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
-      mprotect_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
+        clock_gettime(CLOCK_MONOTONIC, &end_time);
+        mprotect_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
+        mprotect_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
 #endif
-      return 0;
-    }
-  }else if( (prot & PROT_WRITE) && get_code_region(&region,(uintptr_t)addr) ){
-#ifdef DEBUG
-    printf("Detected present region 0x%x (mprotect addr 0x%x) -> writable!\n", region->address, (uintptr_t)addr);
-    printf("Copying from %x to %x, %x bytes!\n", (uintptr_t)((uintptr_t)region->backup.address+(addr-region->address)), (uintptr_t)addr, region->backup.size);
-#endif
-    /* Simply mprotect the entire region and set not writable,
-       expanding if necessary */
-    /* Check whether region extends beyond original, expand size if so */
-    if( len + ((uintptr_t)addr - region->address) > region->size ){
-      region->size = len + ((uintptr_t)addr - region->address);
-    }
-    __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
-#ifdef RECORD_STATS
-    clock_gettime(CLOCK_MONOTONIC, &end_time);
-    mprotect_timer.tv_sec += end_time.tv_sec - start_time.tv_sec;
-    mprotect_timer.tv_nsec += end_time.tv_nsec - start_time.tv_nsec;
-#endif
-    return __real_mprotect((void*)region->address, region->size, prot);
-    /* If the code is being set to writable but not executable,
-       AND if the address is in an existing region,
-       restore original bytes to the region before program can write to it */
-    //int result = __real_mprotect(addr,len,prot); /* Set writable first */
-    /* Restore the bytes for full region or whichever sub-region has been
-       set writable.  Choose the smaller of either the backup size or the
-       length of the mprotected region, as we cannot write to addresses not
-       set to writable, and it's possible for a sub-region to be set writable
-       (in which we must copy using len so we don't copy beyond the writable
-       region) or a new, larger region to be set writable (in which we must
-       copy using backup size, as we only have as much to copy as is in the
-       backup).
-       After this sub-region is set back to executable it
-       will be split into a separate region or expanded when we attempt to
-       rewrite it. */
-    //if( region->backup.size < len ){
-      /* Check whether we have enough space before the end of the region */
-    /*  if( region->size-((uintptr_t)addr-region->address) > region->backup.size){
-        memcpy(addr,
-             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
-             region->backup.size );
-      }else{
-        memcpy(addr,
-             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
-             region->size - ((uintptr_t)addr-region->address) );
-      }
-    }else{*/
-      /* Check whether we have enough space before the end of the region */
-     /* if( region->size-((uintptr_t)addr-region->address) > len ){
-        memcpy(addr,
-             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
-             len );
-      }else{
-        memcpy(addr,
-             (void*)((uintptr_t)region->backup.address+(addr-region->address)),
-             region->size - ((uintptr_t)addr-region->address) );
+        return 0;
       }
     }
-    return result;*/
   }
   __atomic_clear(&miniverse_lock, __ATOMIC_RELEASE);
 #ifdef RECORD_STATS
@@ -755,7 +691,6 @@ void rewrite_region(code_region_t* region){
   pa_entry_t new_mem;
   pa_entry_t old_mem;
   pa_entry_t old_mapping;
-  /*pa_entry_t backup_mem;*/
 
   /* If this region hasn't been rewritten before, check whether applying the
      fixed offset to it results in an address outside our allocated fixed
@@ -785,27 +720,14 @@ void rewrite_region(code_region_t* region){
 #ifdef DEBUG
   printf("Calling real mprotect for orig: 0x%x, 0x%x\n", (uintptr_t)orig_code, code_size);
 #endif
-  /* Set original code to be readable and writable,
+  /* Set original code to be read-only,
      regardless of what it was set to before,
-     so we may disassemble it and write to it.
-     TODO: Set as read-only afterwards to detect changes */
-  __real_mprotect((void*)orig_code, code_size, PROT_READ|PROT_WRITE);
+     so we may disassemble it and disallow future writes. */
+  __real_mprotect((void*)orig_code, code_size, PROT_READ);
 
   old_mapping = region->mapping;
 
   page_alloc(&new_mem, code_size*22);
-
-  /* Free old backup if one is present */
-  /*if( region->backup.address != 0 ){
-#ifdef DEBUG
-    printf("Free old backup: 0x%x, len 0x%x\n", (uintptr_t)region->backup.address, region->backup.size);
-#endif
-    page_free(&region->backup);
-  }*/
-  /* Backup original bytes before rewriting and patching old code section */
-  /*page_alloc(&backup_mem, code_size);
-  memcpy(backup_mem.address, orig_code, code_size);
-  region->backup = backup_mem;*/
 
 #ifdef RECORD_STATS
   struct timespec start_time, end_time;
@@ -896,8 +818,6 @@ void translate_address(void** address){
 
 }
 
-//bool flippy = false;
-
 /* TODO: refer to REG_EIP using a system header rather than this define */
 #define REG_EIP 14
 /* TODO: refer to REG_ESP using a system header rather than this define */
@@ -912,13 +832,6 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
      a region that needs rewriting, rewrite it. */
   uintptr_t target = con->uc_mcontext.gregs[REG_EIP];
   code_region_t* segfault_region;
-
-/*  if( flippy ){
-    flippy = false;
-    return;
-  }else{
-    flippy = true;
-  }*/
 
 #ifdef RECORD_STATS
   struct timespec start_time, end_time;
