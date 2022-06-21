@@ -328,10 +328,16 @@ bool is_proposed_range_valid(uintptr_t range_start, uintptr_t range_end){
   for( size_t i = 0; i < num_maps_entries; i++ ){
     /* Check if memory region falls within given range.  If so,
        then the range is not a valid candidate for new mmap */
+    /* Check if 
+        -region start address is within range,
+        -region end address is within range, or
+        -our range is completely enclosed in the region */
     if( (maps[i].region_start >= range_start && 
          maps[i].region_start <= range_end) ||
         (maps[i].region_end >= range_start &&
-         maps[i].region_end <= range_end) ){
+         maps[i].region_end <= range_end) ||
+        (maps[i].region_start <= range_start &&
+         maps[i].region_end >= range_end) ){
 #ifdef DEBUG
       printf("ALERT: I don't like 0x%x-0x%x\n", range_start, range_end);
 #endif
