@@ -3,6 +3,7 @@ extern "C" {
 #endif 
 
 //#define RECORD_STATS
+//#define ADD_SHADOW_STACK
 
 #ifdef RECORD_STATS
 #include <time.h>
@@ -22,6 +23,10 @@ extern struct timespec gen_none_timer;
 
 #include <ssdis.h>
 #include <pagealloc.h>
+
+#ifdef ADD_SHADOW_STACK
+extern uintptr_t shadow_stack_offset;
+#endif
 
 extern uintptr_t fixed_offset;
 

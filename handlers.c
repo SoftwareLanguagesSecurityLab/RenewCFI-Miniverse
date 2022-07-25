@@ -27,6 +27,10 @@ uintptr_t fixed_offset = 0x20000000;
 uintptr_t fixed_offset_region_addr = 0x0;
 #define FIXED_OFFSET_REGION_SIZE (0x2000000*4+0x2000000*4)
 
+#ifdef ADD_SHADOW_STACK
+uintptr_t shadow_stack_offset = 0x0;
+#endif
+
 #ifdef RECORD_STATS
 #include <time.h>
 
@@ -407,6 +411,25 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
     printf("FATAL ERROR: Could not find vdso in memory maps!\n"); 
     _exit(EXIT_FAILURE);
   }
+
+#ifdef ADD_SHADOW_STACK
+  /* Find address range for stack, allocate memory for shadow stack,
+     and save offset of shadow stack from original stack */
+  uintptr_t stack_start;
+  uintptr_t stack_end;
+  if( !find_segment_by_name("[stack]\n", &stack_start, &stack_end) ){
+    printf("FATAL ERROR: Could not find stack address!\n");
+    _exit(EXIT_FAILURE);
+  }
+  void* shadow_addr = __real_mmap(NULL,
+      stack_end-stack_start,PROT_WRITE|PROT_READ,
+      MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+  if( shadow_addr == MAP_FAILED ){
+    printf("FATAL ERROR: Could not map shadow stack region.\n");
+    _exit(EXIT_FAILURE);
+  }
+  shadow_stack_offset = (uintptr_t)shadow_addr-stack_start;
+#endif
 
   /* Get first executable segment.  This may be the same as caller_seg, if
      the jit code was entered via a jmp and the top address on the stack was
@@ -902,6 +925,16 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
     cache_memory_maps();
     set_fixed_offset(segfault_region->address, caller_address);
   }
+
+#ifdef ADD_SHADOW_STACK
+    /* Write the return address to the shadow stack since non-jit code does
+       not write to the shadow stack */
+    uintptr_t* shadow_stack_entry =
+               (uintptr_t*)((uint8_t*)con->uc_mcontext.gregs[REG_ESP]+
+                            shadow_stack_offset);
+    *shadow_stack_entry = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
+#endif
+
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
   /* If region has not been rewritten yet, rewrite it and all other regions
      that have not yet been rewritten.  This is important in case there are
