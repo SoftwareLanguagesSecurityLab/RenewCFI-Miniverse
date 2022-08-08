@@ -8,17 +8,22 @@ extern "C" {
 #ifdef RECORD_STATS
 #include <time.h>
 
+struct longtimespec {
+  time_t tv_sec;
+  long long tv_nsec;
+};
+
 extern unsigned long long relocs_counter;
 extern unsigned long long target_counter;
 
-extern struct timespec rewrite_and_disasm_timer;
-extern struct timespec just_rewrite_timer;
-extern struct timespec reloc_patch_timer;
-extern struct timespec realloc_timer;
-extern struct timespec gen_ret_timer;
-extern struct timespec gen_cond_timer;
-extern struct timespec gen_uncond_timer;
-extern struct timespec gen_none_timer;
+extern struct longtimespec rewrite_and_disasm_timer;
+extern struct longtimespec just_rewrite_timer;
+extern struct longtimespec reloc_patch_timer;
+extern struct longtimespec realloc_timer;
+extern struct longtimespec gen_ret_timer;
+extern struct longtimespec gen_cond_timer;
+extern struct longtimespec gen_uncond_timer;
+extern struct longtimespec gen_none_timer;
 #endif
 
 #include <ssdis.h>

@@ -35,14 +35,14 @@
 unsigned long long relocs_counter = 0;
 unsigned long long target_counter = 0;
 
-struct timespec rewrite_and_disasm_timer = {0,0};
-struct timespec just_rewrite_timer = {0,0};
-struct timespec reloc_patch_timer = {0,0};
-struct timespec realloc_timer = {0,0};
-struct timespec gen_ret_timer = {0,0};
-struct timespec gen_cond_timer = {0,0};
-struct timespec gen_uncond_timer = {0,0};
-struct timespec gen_none_timer = {0,0};
+struct longtimespec rewrite_and_disasm_timer = {0,0};
+struct longtimespec just_rewrite_timer = {0,0};
+struct longtimespec reloc_patch_timer = {0,0};
+struct longtimespec realloc_timer = {0,0};
+struct longtimespec gen_ret_timer = {0,0};
+struct longtimespec gen_cond_timer = {0,0};
+struct longtimespec gen_uncond_timer = {0,0};
+struct longtimespec gen_none_timer = {0,0};
 #endif
 
 /* TODO: Perhaps we should do two independent passes

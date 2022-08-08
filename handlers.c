@@ -39,10 +39,10 @@ unsigned long long mprotect_counter = 0;
 unsigned long long handler_counter = 0;
 unsigned long long rewrite_counter = 0;
 
-struct timespec mmap_timer = {0,0};
-struct timespec mprotect_timer = {0,0};
-struct timespec handler_timer = {0,0};
-struct timespec rewriter_timer = {0,0};
+struct longtimespec mmap_timer = {0,0};
+struct longtimespec mprotect_timer = {0,0};
+struct longtimespec handler_timer = {0,0};
+struct longtimespec rewriter_timer = {0,0};
 #endif
 
 uintptr_t rewriter_region_start;
@@ -526,28 +526,28 @@ void map_table_for_segment(uintptr_t addr_in_segment){
 #ifdef RECORD_STATS
 void print_stats(){
   printf("Call mmap: %llu\n", mmap_counter);
-  printf("\t%lu s, %lu ns\n", mmap_timer.tv_sec, mmap_timer.tv_nsec);
+  printf("\t%lu s, %lld ns\n", mmap_timer.tv_sec, mmap_timer.tv_nsec);
   printf("Call mprotect: %llu\n", mprotect_counter);
-  printf("\t%lu s, %lu ns (includes rewriter)\n", mprotect_timer.tv_sec, mprotect_timer.tv_nsec);
+  printf("\t%lu s, %lld ns (includes rewriter)\n", mprotect_timer.tv_sec, mprotect_timer.tv_nsec);
   printf("Exception handler: %llu\n", handler_counter);
-  printf("\t%lu s, %lu ns (includes first rewrite)\n", handler_timer.tv_sec, handler_timer.tv_nsec);
+  printf("\t%lu s, %lld ns (includes first rewrite)\n", handler_timer.tv_sec, handler_timer.tv_nsec);
   printf("Rewrites: %llu\n", rewrite_counter);
-  printf("\t%lu s, %lu ns total\n", rewriter_timer.tv_sec, rewriter_timer.tv_nsec);
-  printf("\t\t %lu s, %lu ns rewriting + disasm\n", rewrite_and_disasm_timer.tv_sec, rewrite_and_disasm_timer.tv_nsec );
+  printf("\t%lu s, %lld ns total\n", rewriter_timer.tv_sec, rewriter_timer.tv_nsec);
+  printf("\t\t %lu s, %lld ns rewriting + disasm\n", rewrite_and_disasm_timer.tv_sec, rewrite_and_disasm_timer.tv_nsec );
 #ifdef RECORD_DISASM_STATS
-  printf("\t\t\t %lu s, %lu ns overall disasm\n", disasm_timer.tv_sec, disasm_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns new insts\n", new_inst_timer.tv_sec, new_inst_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns old inst, valid seq\n", valid_seq_timer.tv_sec, valid_seq_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns old inst, invalid seq\n", invalid_seq_timer.tv_sec, invalid_seq_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns end seq\n", end_seq_timer.tv_sec, end_seq_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns overall disasm\n", disasm_timer.tv_sec, disasm_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns new insts\n", new_inst_timer.tv_sec, new_inst_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns old inst, valid seq\n", valid_seq_timer.tv_sec, valid_seq_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns old inst, invalid seq\n", invalid_seq_timer.tv_sec, invalid_seq_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns end seq\n", end_seq_timer.tv_sec, end_seq_timer.tv_nsec );
 #endif
-  printf("\t\t %lu s, %lu ns rewriting\n", just_rewrite_timer.tv_sec, just_rewrite_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns allocating mem\n", realloc_timer.tv_sec, realloc_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns rets\n", gen_ret_timer.tv_sec, gen_ret_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns conds\n", gen_cond_timer.tv_sec, gen_cond_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns unconds\n", gen_uncond_timer.tv_sec, gen_uncond_timer.tv_nsec );
-  printf("\t\t\t %lu s, %lu ns unmodified\n", gen_none_timer.tv_sec, gen_none_timer.tv_nsec );
-  printf("\t\t %lu s, %lu ns patching relocs\n", reloc_patch_timer.tv_sec, reloc_patch_timer.tv_nsec );
+  printf("\t\t %lu s, %lld ns rewriting\n", just_rewrite_timer.tv_sec, just_rewrite_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns allocating mem\n", realloc_timer.tv_sec, realloc_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns rets\n", gen_ret_timer.tv_sec, gen_ret_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns conds\n", gen_cond_timer.tv_sec, gen_cond_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns unconds\n", gen_uncond_timer.tv_sec, gen_uncond_timer.tv_nsec );
+  printf("\t\t\t %lu s, %lld ns unmodified\n", gen_none_timer.tv_sec, gen_none_timer.tv_nsec );
+  printf("\t\t %lu s, %lld ns patching relocs\n", reloc_patch_timer.tv_sec, reloc_patch_timer.tv_nsec );
   printf("Relocs: %llu\n", relocs_counter);
   printf("Targets: %llu\n", target_counter);
   printf("Number of code regions: %u\n", num_code_regions);
