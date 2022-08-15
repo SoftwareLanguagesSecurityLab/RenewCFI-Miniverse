@@ -2,8 +2,12 @@
 extern "C" {
 #endif 
 
+#define SHADOW_STACK_PARALLEL 0
+#define SHADOW_STACK_TRADITIONAL 1
+
 //#define RECORD_STATS
-//#define ADD_SHADOW_STACK
+//#define ADD_SHADOW_STACK SHADOW_STACK_TRADITIONAL
+//#define ADD_SHADOW_STACK SHADOW_STACK_PARALLEL
 
 #ifdef RECORD_STATS
 #include <time.h>

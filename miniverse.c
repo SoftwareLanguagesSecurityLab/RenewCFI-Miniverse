@@ -81,10 +81,23 @@ typedef struct mv_code_t{
 } mv_code_t;
 
 #ifdef ADD_SHADOW_STACK
+#if ADD_SHADOW_STACK==SHADOW_STACK_TRADITIONAL
+/* Traditional shadow stack */
+/* push eax; sub dword ptr [<offset>],4;mov eax, [<offset>] */
+uint8_t shadow_call_template1[] = "\x50\x83\x2d\xff\xff\xff\xff\x04\xa1\xff\xff\xff\xff";
+/* mov dword ptr [eax],<address>;pop eax */
+uint8_t shadow_call_template2[] = "\xc7\x00\xff\xff\xff\xff\x58";
+/* push eax; mov eax, [<offset>];add dword ptr [<offset>],4 */
+uint8_t shadow_ret_template1[] = "\x50\xa1\xff\xff\xff\xff\x83\x05\xff\xff\xff\xff\x04";
+/* mov eax,[eax];mov [esp+4],eax;pop eax */
+uint8_t shadow_ret_template2[] = "\x8b\x00\x89\x44\x24\x04\x58";
+#else
+/* Parallel shadow stack */
 /* mov dword ptr [esp+<offset>], <address> */
 uint8_t shadow_call_template[] = "\xc7\x84\x24\xff\xff\xff\xff\x00\x00\x00\x00";
 /* add esp,4;push dword ptr [esp+<offset>] */
 uint8_t shadow_ret_template[] = "\x83\xc4\x04\xff\xb4\x24\xff\xff\xff\xff";
+#endif
 #endif
 
 uint8_t ret_template[] = "\x87\x04\x24\xf6\x00\x03\x0f\x45\x00";
@@ -512,6 +525,22 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
   */ 
   bool is_target = code->is_target(insn->address, (uint8_t*)(uintptr_t)insn->address, code->base, code->orig_size);
 #ifdef ADD_SHADOW_STACK
+#if ADD_SHADOW_STACK==SHADOW_STACK_TRADITIONAL
+  /* Traditional shadow stack */
+  gen_padding(code,sizeof(shadow_ret_template1)-1,is_target);
+  check_target(code,insn,is_target);
+  memcpy(code->code+code->offset, shadow_ret_template1,
+      sizeof(shadow_ret_template1)-1);
+  /* Patch shadow stack offset into instructions */
+  *(uintptr_t*)(code->code+code->offset+2) = (uintptr_t)&shadow_stack_offset;
+  *(uintptr_t*)(code->code+code->offset+8) = (uintptr_t)&shadow_stack_offset;
+  code->offset += sizeof(shadow_ret_template1)-1;
+  gen_padding(code,sizeof(shadow_ret_template2)-1,is_target);
+  memcpy(code->code+code->offset, shadow_ret_template2,
+      sizeof(shadow_ret_template2)-1);
+  code->offset += sizeof(shadow_ret_template2)-1;
+#else
+  /* Parallel shadow stack */
   gen_padding(code,sizeof(shadow_ret_template)-1,is_target);
   check_target(code,insn,is_target);
   memcpy(code->code+code->offset, shadow_ret_template,
@@ -519,6 +548,7 @@ inline void gen_ret(mv_code_t *code, ss_insn *insn){
   /* Patch shadow stack offset into instruction encoding */
   *(uintptr_t*)(code->code+code->offset+6) = shadow_stack_offset-4;
   code->offset += sizeof(shadow_ret_template)-1;
+#endif
 #endif
 #ifdef PUSH_OLD_ADDRESSES
   if( *(insn->bytes) != RET_NEAR_IMM ){
@@ -820,6 +850,25 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       if( is_pic(code, insn->address + insn->size + disp) && *(insn->bytes+start_offset) == CALL_REL_NEAR ){
 #endif
 #ifdef ADD_SHADOW_STACK
+#if ADD_SHADOW_STACK==SHADOW_STACK_TRADITIONAL
+      /* Traditional shadow stack */
+      gen_padding( code, sizeof(shadow_call_template1)-1, is_target);
+      check_target(code, insn, is_target);
+      memcpy( code->code+code->offset, shadow_call_template1,
+              sizeof(shadow_call_template1)-1);
+      /* Patch shadow stack offset into instructions */
+      *(uintptr_t*)(code->code+code->offset+3) = (uintptr_t)&shadow_stack_offset;
+      *(uintptr_t*)(code->code+code->offset+9) = (uintptr_t)&shadow_stack_offset;
+      code->offset += sizeof(shadow_call_template1)-1;
+      /* Second half of shadow stack call */
+      gen_padding( code, sizeof(shadow_call_template2)-1, is_target);
+      memcpy( code->code+code->offset, shadow_call_template2,
+              sizeof(shadow_call_template2)-1);
+      /* Patch return address into instruction */
+      *(uintptr_t*)(code->code+code->offset+2) = insn->address + insn->size;
+      code->offset += sizeof(shadow_call_template2)-1;
+#else
+      /* Parallel shadow stack */
       gen_padding( code, sizeof(shadow_call_template)-1, is_target);
       check_target(code, insn, is_target);
       memcpy( code->code+code->offset, shadow_call_template,
@@ -828,6 +877,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
       *(uintptr_t*)(code->code+code->offset+3) = shadow_stack_offset-4;
       *(uintptr_t*)(code->code+code->offset+7) = insn->address + insn->size;
       code->offset += sizeof(shadow_call_template)-1;
+#endif
 #endif
         /* If this is a call within this same region, transform to push the
            old return address and direct jump to address in this region */
@@ -904,6 +954,25 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         code->offset += sizeof(indirect_template_after)-1;
 
 #ifdef ADD_SHADOW_STACK
+#if ADD_SHADOW_STACK==SHADOW_STACK_TRADITIONAL
+        /* Traditional shadow stack */
+        gen_padding( code, sizeof(shadow_call_template1)-1, is_target);
+        check_target(code, insn, is_target);
+        memcpy( code->code+code->offset, shadow_call_template1,
+                sizeof(shadow_call_template1)-1);
+        /* Patch shadow stack offset into instructions */
+        *(uintptr_t*)(code->code+code->offset+3) = (uintptr_t)&shadow_stack_offset;
+        *(uintptr_t*)(code->code+code->offset+9) = (uintptr_t)&shadow_stack_offset;
+        code->offset += sizeof(shadow_call_template1)-1;
+        /* Second half of shadow stack call */
+        gen_padding( code, sizeof(shadow_call_template2)-1, is_target);
+        memcpy( code->code+code->offset, shadow_call_template2,
+                sizeof(shadow_call_template2)-1);
+        /* Patch return address into instruction */
+        *(uintptr_t*)(code->code+code->offset+2) = insn->address + insn->size;
+        code->offset += sizeof(shadow_call_template2)-1;
+#else
+        /* Parallel shadow stack */
         gen_padding( code, sizeof(shadow_call_template)-1, is_target);
         memcpy( code->code+code->offset, shadow_call_template,
                 sizeof(shadow_call_template)-1);
@@ -911,6 +980,7 @@ inline void gen_uncond(mv_code_t *code, ss_insn *insn){
         *(uintptr_t*)(code->code+code->offset+3) = shadow_stack_offset;
         *(uintptr_t*)(code->code+code->offset+7) = insn->address + insn->size;
         code->offset += sizeof(shadow_call_template)-1;
+#endif
 #endif
 
         gen_padding( code, sizeof(indirect_template_mask_push_jmp)-1, true);
@@ -1098,6 +1168,25 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
   /* Second half */ 
   if( insn->id == SS_INS_CALL ){
 #ifdef ADD_SHADOW_STACK
+#if ADD_SHADOW_STACK==SHADOW_STACK_TRADITIONAL
+    /* Traditional shadow stack */
+    gen_padding( code, sizeof(shadow_call_template1)-1, is_target);
+    check_target(code, insn, is_target);
+    memcpy( code->code+code->offset, shadow_call_template1,
+            sizeof(shadow_call_template1)-1);
+    /* Patch shadow stack offset into instructions */
+    *(uintptr_t*)(code->code+code->offset+3) = (uintptr_t)&shadow_stack_offset;
+    *(uintptr_t*)(code->code+code->offset+9) = (uintptr_t)&shadow_stack_offset;
+    code->offset += sizeof(shadow_call_template1)-1;
+    /* Second half of shadow stack call */
+    gen_padding( code, sizeof(shadow_call_template2)-1, is_target);
+    memcpy( code->code+code->offset, shadow_call_template2,
+            sizeof(shadow_call_template2)-1);
+    /* Patch return address into instruction */
+    *(uintptr_t*)(code->code+code->offset+2) = insn->address + insn->size;
+    code->offset += sizeof(shadow_call_template2)-1;
+#else
+    /* Parallel shadow stack */
     gen_padding( code, sizeof(shadow_call_template)-1, is_target);
     memcpy( code->code+code->offset, shadow_call_template,
             sizeof(shadow_call_template)-1);
@@ -1105,6 +1194,7 @@ void gen_indirect(mv_code_t *code, ss_insn *insn){
     *(uintptr_t*)(code->code+code->offset+3) = shadow_stack_offset;
     *(uintptr_t*)(code->code+code->offset+7) = insn->address + insn->size;
     code->offset += sizeof(shadow_call_template)-1;
+#endif
 #endif
 #ifdef PUSH_OLD_ADDRESSES
 #ifdef KERNEL_VSYSCALL_OPTIMIZATION

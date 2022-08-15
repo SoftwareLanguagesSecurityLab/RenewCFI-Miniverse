@@ -428,7 +428,13 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
     printf("FATAL ERROR: Could not map shadow stack region.\n");
     _exit(EXIT_FAILURE);
   }
+#if ADD_SHADOW_STACK==SHADOW_STACK_TRADITIONAL
+  /* Traditional shadow stack */
+  shadow_stack_offset = (uintptr_t)stack_end;
+#else
+  /* Parallel shadow stack */
   shadow_stack_offset = (uintptr_t)shadow_addr-stack_start;
+#endif
 #endif
 
   /* Get first executable segment.  This may be the same as caller_seg, if
@@ -927,12 +933,21 @@ void sigsegv_handler(int sig, siginfo_t *info, void *ucontext){
   }
 
 #ifdef ADD_SHADOW_STACK
+#if ADD_SHADOW_STACK==SHADOW_STACK_TRADITIONAL
+    /* Traditional shadow stack */
+    /* Write the return address to the shadow stack since non-jit code does
+       not write to the shadow stack */
+    shadow_stack_offset -= 4;
+    *(uintptr_t*)shadow_stack_offset = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
+#else
+    /* Parallel shadow stack */
     /* Write the return address to the shadow stack since non-jit code does
        not write to the shadow stack */
     uintptr_t* shadow_stack_entry =
                (uintptr_t*)((uint8_t*)con->uc_mcontext.gregs[REG_ESP]+
                             shadow_stack_offset);
     *shadow_stack_entry = *(uintptr_t*)con->uc_mcontext.gregs[REG_ESP];
+#endif
 #endif
 
   //printf( "Stats for region @ 0x%x: 0x%x, %d, %d, 0x%x, 0x%x\n", (uintptr_t)region, region->address, region->size, region->rewritten, region->new_address, (uintptr_t)region->mapping.address);
