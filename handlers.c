@@ -421,8 +421,9 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
     printf("FATAL ERROR: Could not find stack address!\n");
     _exit(EXIT_FAILURE);
   }
+  /* Allocate twice the size of the current stack size for the shadow stack */
   void* shadow_addr = __real_mmap(NULL,
-      stack_end-stack_start,PROT_WRITE|PROT_READ,
+      2*(stack_end-stack_start),PROT_WRITE|PROT_READ,
       MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
   if( shadow_addr == MAP_FAILED ){
     printf("FATAL ERROR: Could not map shadow stack region.\n");
@@ -433,7 +434,10 @@ void set_fixed_offset(uintptr_t segfault_addr, uintptr_t calling_addr){
   shadow_stack_offset = (uintptr_t)stack_end;
 #else
   /* Parallel shadow stack */
-  shadow_stack_offset = (uintptr_t)shadow_addr-stack_start;
+  /* Set offset to be halfway into the shadow stack so that there is room
+     for the stack to expand */
+  shadow_stack_offset = (uintptr_t)(shadow_addr+(stack_end-stack_start)) - 
+                                    stack_start;
 #endif
 #endif
 
